@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  file-inventory:
+    build: .
+    container_name: file-inventory-service
+    volumes:
+      # Mount the directory you want to scan
+      - /mnt/nas:/scan:ro
+      # Persist the database
+      - ./data:/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Override command for custom options
+    # command: ["--scan-path", "/scan", "--db-path", "/data/inventory.db", "--stats", "--find-duplicates"]
+    restart: "no"
+
