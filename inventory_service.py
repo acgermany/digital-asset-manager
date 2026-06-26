@@ -5,6 +5,9 @@ from pathlib import Path
 from datetime import datetime
 import argparse
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# -------------------- Logging --------------------
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,17 +15,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# -------------------- Service --------------------
 
 class FileInventoryService:
     def __init__(self, db_path='/data/inventory.db'):
         self.db_path = db_path
         self.init_database()
-    
+
     def init_database(self):
-        """Initialize SQLite database with inventory table"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
+        # Performance + safety
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS file_inventory (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,20 +41,17 @@ class FileInventoryService:
                 UNIQUE(filepath, sha256)
             )
         ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_filepath ON file_inventory(filepath)
-        ''')
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_sha256 ON file_inventory(sha256)
-        ''')
-        
+
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_filepath ON file_inventory(filepath)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sha256 ON file_inventory(sha256)')
+
         conn.commit()
         conn.close()
         logger.info(f"Database initialized at {self.db_path}")
-    
+
+    # -------------------- Hashing --------------------
+
     def calculate_sha256(self, filepath, chunk_size=8192):
-        """Calculate SHA256 checksum of a file"""
         sha256_hash = hashlib.sha256()
         try:
             with open(filepath, 'rb') as f:
@@ -55,171 +59,159 @@ class FileInventoryService:
                     sha256_hash.update(chunk)
             return sha256_hash.hexdigest()
         except Exception as e:
-            logger.error(f"Error calculating checksum for {filepath}: {e}")
+            logger.error(f"Checksum failed for {filepath}: {e}")
             return None
-    
-    def inventory_files(self, scan_path='/scan', exclude_patterns=None):
-        """Scan directory and inventory all files"""
-        if exclude_patterns is None:
-            exclude_patterns = []
-        
+
+    def process_file(self, filepath):
+        try:
+            stat = filepath.stat()
+            checksum = self.calculate_sha256(filepath)
+            if not checksum:
+                return None
+
+            return (
+                str(filepath),
+                filepath.name,
+                stat.st_size,
+                checksum,
+                datetime.now()
+            )
+        except Exception as e:
+            logger.error(f"Processing failed for {filepath}: {e}")
+            return None
+
+    # -------------------- Inventory --------------------
+
+    def inventory_files(self, scan_path='/scan', exclude_patterns=None, workers=None):
+        exclude_patterns = exclude_patterns or []
         scan_path = Path(scan_path)
+
         if not scan_path.exists():
             logger.error(f"Scan path does not exist: {scan_path}")
             return
-        
-        logger.info(f"Starting inventory scan of {scan_path}")
-        
+
+        workers = workers or max(2, os.cpu_count() or 4)
+        logger.info(f"Scanning {scan_path} with {workers} worker threads")
+
+        files = []
+        for root, dirs, filenames in os.walk(scan_path):
+            dirs[:] = [
+                d for d in dirs
+                if not any(Path(root, d).match(p) for p in exclude_patterns)
+            ]
+            for name in filenames:
+                path = Path(root) / name
+                if not any(path.match(p) for p in exclude_patterns):
+                    files.append(path)
+
+        logger.info(f"Found {len(files)} files")
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        file_count = 0
-        error_count = 0
-        
-        for root, dirs, files in os.walk(scan_path):
-            # Filter out excluded directories
-            dirs[:] = [d for d in dirs if not any(
-                Path(root).joinpath(d).match(pattern) 
-                for pattern in exclude_patterns
-            )]
-            
-            for filename in files:
-                filepath = Path(root) / filename
-                
-                # Skip if matches exclude pattern
-                if any(filepath.match(pattern) for pattern in exclude_patterns):
+
+        processed = 0
+        errors = 0
+        batch = []
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(self.process_file, f): f for f in files}
+
+            for future in as_completed(futures):
+                result = future.result()
+                if not result:
+                    errors += 1
                     continue
-                
-                try:
-                    file_stat = filepath.stat()
-                    filesize = file_stat.st_size
-                    
-                    logger.info(f"Processing: {filepath}")
-                    
-                    checksum = self.calculate_sha256(filepath)
-                    if checksum is None:
-                        error_count += 1
-                        continue
-                    
-                    cursor.execute('''
-                        INSERT OR REPLACE INTO file_inventory 
+
+                batch.append(result)
+                processed += 1
+
+                if len(batch) >= 100:
+                    cursor.executemany('''
+                        INSERT OR REPLACE INTO file_inventory
                         (filepath, filename, filesize, sha256, scan_date)
                         VALUES (?, ?, ?, ?, ?)
-                    ''', (
-                        str(filepath),
-                        filename,
-                        filesize,
-                        checksum,
-                        datetime.now()
-                    ))
-                    
-                    file_count += 1
-                    
-                    if file_count % 100 == 0:
-                        conn.commit()
-                        logger.info(f"Processed {file_count} files...")
-                
-                except Exception as e:
-                    logger.error(f"Error processing {filepath}: {e}")
-                    error_count += 1
-        
-        conn.commit()
+                    ''', batch)
+                    conn.commit()
+                    batch.clear()
+                    logger.info(f"Processed {processed} files")
+
+        if batch:
+            cursor.executemany('''
+                INSERT OR REPLACE INTO file_inventory
+                (filepath, filename, filesize, sha256, scan_date)
+                VALUES (?, ?, ?, ?, ?)
+            ''', batch)
+            conn.commit()
+
         conn.close()
-        
-        logger.info(f"Inventory complete: {file_count} files processed, {error_count} errors")
-    
+        logger.info(f"Inventory complete: {processed} files, {errors} errors")
+
+    # -------------------- Queries --------------------
+
     def get_statistics(self):
-        """Get inventory statistics"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         cursor.execute('SELECT COUNT(*), SUM(filesize) FROM file_inventory')
-        count, total_size = cursor.fetchone()
-        
+        count, size = cursor.fetchone()
+
         cursor.execute('SELECT COUNT(DISTINCT sha256) FROM file_inventory')
-        unique_files = cursor.fetchone()[0]
-        
+        unique = cursor.fetchone()[0]
+
         conn.close()
-        
+
         return {
             'total_files': count or 0,
-            'total_size_bytes': total_size or 0,
-            'total_size_gb': (total_size or 0) / (1024**3),
-            'unique_checksums': unique_files or 0,
-            'duplicate_files': (count or 0) - (unique_files or 0)
+            'total_size_gb': (size or 0) / (1024**3),
+            'unique_files': unique or 0,
+            'duplicate_files': (count or 0) - (unique or 0)
         }
-    
+
     def find_duplicates(self):
-        """Find duplicate files based on SHA256"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         cursor.execute('''
-            SELECT sha256, filepath, filesize, COUNT(*) as count
+            SELECT sha256, filepath, filesize, COUNT(*)
             FROM file_inventory
             GROUP BY sha256
-            HAVING count > 1
+            HAVING COUNT(*) > 1
             ORDER BY filesize DESC
         ''')
-        
-        duplicates = cursor.fetchall()
-        conn.close()
-        
-        return duplicates
 
+        results = cursor.fetchall()
+        conn.close()
+        return results
+
+# -------------------- CLI --------------------
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='File Inventory Service - Scan and checksum files'
-    )
-    parser.add_argument(
-        '--scan-path',
-        default='/scan',
-        help='Path to scan (default: /scan)'
-    )
-    parser.add_argument(
-        '--db-path',
-        default='/data/inventory.db',
-        help='Database path (default: /data/inventory.db)'
-    )
-    parser.add_argument(
-        '--exclude',
-        nargs='*',
-        default=[],
-        help='Exclude patterns (e.g., *.tmp __pycache__)'
-    )
-    parser.add_argument(
-        '--stats',
-        action='store_true',
-        help='Show statistics after scan'
-    )
-    parser.add_argument(
-        '--find-duplicates',
-        action='store_true',
-        help='Find and display duplicate files'
-    )
-    
+    parser = argparse.ArgumentParser(description='Multithreaded File Inventory Service')
+    parser.add_argument('--scan-path', default='/scan')
+    parser.add_argument('--db-path', default='/data/inventory.db')
+    parser.add_argument('--exclude', nargs='*', default=[])
+    parser.add_argument('--workers', type=int, help='Number of worker threads')
+    parser.add_argument('--stats', action='store_true')
+    parser.add_argument('--find-duplicates', action='store_true')
+
     args = parser.parse_args()
-    
+
     service = FileInventoryService(db_path=args.db_path)
-    service.inventory_files(scan_path=args.scan_path, exclude_patterns=args.exclude)
-    
+    service.inventory_files(
+        scan_path=args.scan_path,
+        exclude_patterns=args.exclude,
+        workers=args.workers
+    )
+
     if args.stats:
         stats = service.get_statistics()
-        logger.info("\n=== Inventory Statistics ===")
-        logger.info(f"Total files: {stats['total_files']}")
-        logger.info(f"Total size: {stats['total_size_gb']:.2f} GB")
-        logger.info(f"Unique files: {stats['unique_checksums']}")
-        logger.info(f"Duplicate files: {stats['duplicate_files']}")
-    
-    if args.find_duplicates:
-        duplicates = service.find_duplicates()
-        if duplicates:
-            logger.info("\n=== Duplicate Files ===")
-            for sha256, filepath, filesize, count in duplicates:
-                logger.info(f"SHA256: {sha256}")
-                logger.info(f"  Size: {filesize} bytes, Count: {count}")
+        logger.info(f"Files: {stats['total_files']}")
+        logger.info(f"Size: {stats['total_size_gb']:.2f} GB")
+        logger.info(f"Duplicates: {stats['duplicate_files']}")
 
+    if args.find_duplicates:
+        for sha256, path, size, count in service.find_duplicates():
+            logger.info(f"{sha256} ({count} copies, {size} bytes) → {path}")
 
 if __name__ == '__main__':
     main()

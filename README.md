@@ -1,6 +1,6 @@
-# File Inventory Service
+# Digital Asset Manager
 
-A Docker-based service that scans storage locations, calculates SHA256 checksums, and logs file metadata to a persistent SQLite database.
+A Docker-based service that scans storage locations, calculates SHA256 checksums, and logs file metadata to a persistent SQLite database. Includes a web UI for browsing inventory, detecting duplicates, and marking files for deletion.
 
 ## Features
 
@@ -10,7 +10,44 @@ A Docker-based service that scans storage locations, calculates SHA256 checksums
 - Records: filepath, filename, filesize, sha256, date_created, date_modified, scan_date
 - Persistent SQLite database
 - No record inserted until checksum is successfully computed
-- Simple, focused functionality
+- **Web UI** for inventory stats, duplicate review, and file management
+
+## Web App
+
+The web app runs two services via docker-compose:
+
+| Service | Port | Description |
+|---------|------|-------------|
+| `api` | 8000 | FastAPI backend — serves all `/api/` endpoints |
+| `frontend` | 3000 | React SPA — nginx-served, proxies `/api/` to the backend |
+
+### Starting the web app
+
+```bash
+docker-compose up --build
+```
+
+Then open [http://localhost:3000](http://localhost:3000).
+
+### Views
+
+- **Dashboard** — inventory stats (total files, size, duplicate counts) and live scan progress
+- **Duplicates** — paginated duplicate groups with per-file scoring; mark individual files or auto-mark all but the best copy
+- **Scan** — configure scan path and worker count, start a background scan, monitor live progress
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/stats` | Inventory counts and size metrics |
+| `GET` | `/api/files` | Paginated file list with search/filter |
+| `POST` | `/api/files/{id}/mark` | Toggle deletion mark (`?mark=true\|false`) |
+| `GET` | `/api/duplicates` | Paginated duplicate groups with scoring |
+| `POST` | `/api/duplicates/{sha256}/auto-mark` | Mark all but highest-scored file for deletion |
+| `POST` | `/api/scan/start` | Start background scan (`?scan_path&workers`) |
+| `GET` | `/api/scan/status` | Live scan progress |
+
+> Files marked for deletion are flagged in the database only — no files are deleted by the app.
 
 ## Quick Start
 

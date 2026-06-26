@@ -1,17 +1,25 @@
 version: '3.8'
 
 services:
-  file-inventory:
-    build: .
-    container_name: file-inventory-service
-    volumes:
-      # Mount the directory you want to scan
-      - /mnt/nas:/scan:ro
-      # Persist the database
-      - ./data:/data
-    environment:
-      - PYTHONUNBUFFERED=1
-    # Override command for custom options
-    # command: ["--scan-path", "/scan", "--db-path", "/data/inventory.db", "--stats", "--find-duplicates"]
-    restart: "no"
 
+  api:
+    build: ./api
+    container_name: dam-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - /Volumes:/scan:ro   # all host-mounted drives, auto-updates as drives connect/disconnect
+      - ./data:/data        # SQLite database persistence
+    environment:
+      - DB_PATH=/data/inventory.db
+      - SCAN_PATH=/scan
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: dam-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    restart: unless-stopped
