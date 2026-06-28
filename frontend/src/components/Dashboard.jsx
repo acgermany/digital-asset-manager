@@ -29,7 +29,7 @@ export default function Dashboard({ onGoScan }) {
     let alive = true
     async function load() {
       try {
-        const [s, sc] = await Promise.all([api.stats(), api.scanStatus()])
+        const [s, sc] = await Promise.all([api.stats(), api.activeJob()])
         if (!alive) return
         setStats(s)
         setScan(sc)
@@ -56,17 +56,15 @@ export default function Dashboard({ onGoScan }) {
           <div className="section-title">Overview</div>
           <div className="section-sub">Inventory statistics from the last scan</div>
         </div>
-        {scan && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className={`pill ${scan.running ? 'green' : 'grey'}`} />
-            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-              {scan.running ? 'Scan running…' : scan.end_time ? `Last scan ${new Date(scan.end_time).toLocaleString()}` : 'No scan yet'}
-            </span>
-            {!scan.running && (
-              <button className="btn sm primary" onClick={onGoScan}>Scan now</button>
-            )}
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className={`pill ${scan ? 'green' : 'grey'}`} />
+          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            {scan ? 'Scan running…' : 'No scan running'}
+          </span>
+          {!scan && (
+            <button className="btn sm primary" onClick={onGoScan}>Scan now</button>
+          )}
+        </div>
       </div>
 
       <div className="stat-grid">
@@ -105,7 +103,7 @@ export default function Dashboard({ onGoScan }) {
         />
       </div>
 
-      {scan?.running && (
+      {scan && (
         <div className="card" style={{ marginTop: 8 }}>
           <div className="card-title">Scan in progress</div>
           <div className="progress-track">
@@ -115,8 +113,8 @@ export default function Dashboard({ onGoScan }) {
             />
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)' }}>
-            <span>{scan.progress.toLocaleString()} / {scan.total.toLocaleString()} files</span>
-            <span>{scan.errors} errors</span>
+            <span>{(scan.progress || 0).toLocaleString()} / {(scan.total || 0).toLocaleString()} files</span>
+            <span>{scan.errors || 0} errors</span>
           </div>
           <div className="scan-file">{scan.current_file}</div>
         </div>

@@ -4,22 +4,67 @@ services:
 
   api:
     build: ./api
+    image: 10.212.10.10:8083/dam-api:latest
     container_name: dam-api
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
-      - /Volumes:/scan:ro   # all host-mounted drives, auto-updates as drives connect/disconnect
-      - ./data:/data        # SQLite database persistence
+      - /Volumes:/scan:ro           # all host-mounted drives (scan utility)
+      - /Volumes/ingest:/nas/ingest
+      - /Volumes/archive:/nas/archive
+      - ./data:/data                # SQLite database persistence
     environment:
       - DB_PATH=/data/inventory.db
       - SCAN_PATH=/scan
+      - INGEST_PATH=/nas/ingest
+      - ARCHIVE_PATH=/nas/archive
     restart: unless-stopped
 
   frontend:
     build: ./frontend
+    image: 10.212.10.10:8083/dam-frontend:latest
     container_name: dam-frontend
     ports:
-      - "3000:80"
+      - "3001:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  worker:
+    build: ./worker
+    image: 10.212.10.10:8083/dam-worker:latest
+    container_name: dam-worker
+    volumes:
+      - /Volumes:/scan:ro
+      - /Volumes/ingest:/nas/ingest
+      - /Volumes/homes:/nas/homes
+      - /Volumes/archive:/nas/archive
+      - ./data:/data
+      - ./workflows:/workflows
+    environment:
+      - DB_PATH=/data/inventory.db
+      - SCAN_PATH=/scan
+      - INGEST_PATH=/nas/ingest
+      - INGEST_WATCH_PATH=/nas/ingest/to_index
+      - STAGING_PATH=/nas/ingest/to_archive
+      - ARCHIVE_PATH=/nas/archive
+      - WORKFLOWS_PATH=/workflows
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  watcher:
+    build: ./watcher
+    image: 10.212.10.10:8083/dam-watcher:latest
+    container_name: dam-watcher
+    volumes:
+      - /Volumes/ingest:/nas/ingest
+      - /Volumes/homes:/nas/homes
+      - ./data:/data
+    environment:
+      - DB_PATH=/data/inventory.db
+      - INGEST_PATH=/nas/ingest/to_index
+      - PHONE_SOURCES=ag:/nas/homes/auston/Photos/MobileBackup/iPhone (11)
     depends_on:
       - api
     restart: unless-stopped

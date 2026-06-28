@@ -1,0 +1,67 @@
+version: '3.8'
+
+# Deployment compose — no build context, pulls images from Nexus.
+# Usage on the deployment server:
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+
+services:
+
+  api:
+    image: 10.212.10.10:8083/dam-api:latest
+    container_name: dam-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - /mnt/nas:/nas/ingest
+      - /mnt/archive:/nas/archive
+      - ./data:/data
+    environment:
+      - DB_PATH=/data/inventory.db
+      - SCAN_PATH=/nas/ingest
+      - INGEST_PATH=/nas/ingest
+      - ARCHIVE_PATH=/nas/archive
+    restart: unless-stopped
+
+  frontend:
+    image: 10.212.10.10:8083/dam-frontend:latest
+    container_name: dam-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  worker:
+    image: 10.212.10.10:8083/dam-worker:latest
+    container_name: dam-worker
+    volumes:
+      - /mnt/nas:/nas/ingest
+      - /mnt/archive:/nas/archive
+      - ./data:/data
+      - ./workflows:/workflows
+    environment:
+      - DB_PATH=/data/inventory.db
+      - SCAN_PATH=/nas/ingest
+      - INGEST_PATH=/nas/ingest
+      - INGEST_WATCH_PATH=/nas/ingest/to_index
+      - STAGING_PATH=/nas/ingest/to_archive
+      - ARCHIVE_PATH=/nas/archive
+      - WORKFLOWS_PATH=/workflows
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  watcher:
+    image: 10.212.10.10:8083/dam-watcher:latest
+    container_name: dam-watcher
+    volumes:
+      - /mnt/nas:/nas/ingest
+      - ./data:/data
+    environment:
+      - DB_PATH=/data/inventory.db
+      - INGEST_PATH=/nas/ingest/to_index
+      - PHONE_SOURCES=ag:/nas/homes/auston/Photos/MobileBackup/iPhone (11)
+    depends_on:
+      - api
+    restart: unless-stopped

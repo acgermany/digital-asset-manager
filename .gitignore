@@ -212,3 +212,6 @@ data/*.db-wal
 data/*.db-shm
 frontend/node_modules/
 *.csv
+
+# Local dev data — contents are not tracked
+nas/

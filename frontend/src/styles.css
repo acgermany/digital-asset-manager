@@ -507,6 +507,24 @@ input.search:focus { outline: none; border-color: var(--accent-lt); }
   white-space: nowrap;
 }
 
+.modal-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.modal-tab {
+  padding: 8px 20px;
+  font-size: 13px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.modal-tab:hover { color: var(--text); }
+.modal-tab.active { color: var(--accent-lt); border-bottom-color: var(--accent-lt); }
+
 .modal-body {
   flex: 1;
   overflow: auto;

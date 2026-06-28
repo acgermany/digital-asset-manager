@@ -1,18 +1,18 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../api'
 
-const DEFAULT_PATH = import.meta.env.VITE_SCAN_PATH || '/scan'
+const DEFAULT_PATH = import.meta.env.VITE_SCAN_PATH || '/nas/ingest'
 
 export default function ScanControl() {
-  const [status, setStatus]   = useState(null)
-  const [scanPath, setScanPath] = useState(DEFAULT_PATH)
-  const [workers, setWorkers]  = useState(4)
-  const [err, setErr]          = useState(null)
-  const [browser, setBrowser]  = useState(null)   // null = closed
+  const [activeJob, setActiveJob] = useState(null)
+  const [lastJob, setLastJob]     = useState(null)
+  const [scanPath, setScanPath]   = useState(DEFAULT_PATH)
+  const [workers, setWorkers]     = useState(4)
+  const [err, setErr]             = useState(null)
+  const [browser, setBrowser]     = useState(null)
   const [browseErr, setBrowseErr] = useState(null)
   const browserRef = useRef(null)
 
-  // Close browser on outside click
   useEffect(() => {
     if (!browser) return
     function onDown(e) {
@@ -23,6 +23,39 @@ export default function ScanControl() {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [browser])
+
+  const fetchLastJob = async () => {
+    try {
+      const data = await api.recentJobs(1)
+      const jobs = data?.jobs || []
+      const done = jobs.find(j => j.status === 'completed' || j.status === 'cancelled' || j.status === 'failed')
+      if (done) setLastJob(done)
+    } catch (_) {}
+  }
+
+  useEffect(() => {
+    fetchLastJob()
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    async function poll() {
+      try {
+        const job = await api.activeJob()
+        if (!alive) return
+        setActiveJob(job)
+        setErr(null)
+        if (!job) {
+          fetchLastJob()
+        }
+      } catch (e) {
+        if (alive) setErr(e.message)
+      }
+    }
+    poll()
+    const t = setInterval(poll, 1000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
 
   const openBrowser = async () => {
     setBrowseErr(null)
@@ -50,21 +83,6 @@ export default function ScanControl() {
     setBrowser(null)
   }
 
-  useEffect(() => {
-    let alive = true
-    async function poll() {
-      try {
-        const s = await api.scanStatus()
-        if (alive) { setStatus(s); setErr(null) }
-      } catch (e) {
-        if (alive) setErr(e.message)
-      }
-    }
-    poll()
-    const t = setInterval(poll, 1000)
-    return () => { alive = false; clearInterval(t) }
-  }, [])
-
   const handleStart = async () => {
     try {
       setErr(null)
@@ -77,20 +95,25 @@ export default function ScanControl() {
   const handleCancel = async () => {
     try {
       setErr(null)
-      await api.cancelScan()
+      await api.cancelJob(activeJob.id)
     } catch (e) {
       setErr(e.message)
     }
   }
 
-  const isStopping = status?.phase === 'stopping'
+  const isRunning   = activeJob?.status === 'running'
+  const isPending   = activeJob?.status === 'pending'
+  const isCancelling = activeJob?.status === 'cancelling'
+  const isActive    = isRunning || isPending || isCancelling
 
-  const pct = status?.total
-    ? Math.round(status.progress / status.total * 100)
+  const pct = activeJob?.total
+    ? Math.round(activeJob.progress / activeJob.total * 100)
     : 0
 
-  const duration = status?.start_time && status?.end_time
-    ? Math.round((new Date(status.end_time) - new Date(status.start_time)) / 1000)
+  const displayJob = activeJob || lastJob
+
+  const duration = displayJob?.started_at && displayJob?.completed_at
+    ? Math.round((new Date(displayJob.completed_at) - new Date(displayJob.started_at)) / 1000)
     : null
 
   return (
@@ -118,13 +141,13 @@ export default function ScanControl() {
                 style={{ width: 300 }}
                 value={scanPath}
                 onChange={e => setScanPath(e.target.value)}
-                disabled={status?.running}
+                disabled={isActive}
                 placeholder="/scan"
               />
               <button
                 className="btn sm"
                 onClick={openBrowser}
-                disabled={status?.running}
+                disabled={isActive}
                 title="Browse directories"
               >
                 Browse
@@ -202,70 +225,71 @@ export default function ScanControl() {
               max={16}
               value={workers}
               onChange={e => setWorkers(Number(e.target.value))}
-              disabled={status?.running}
+              disabled={isActive}
             />
           </div>
           <button
             className="btn primary"
             onClick={handleStart}
-            disabled={status?.running}
+            disabled={isActive}
           >
             Start Scan
           </button>
-          {status?.running && (
+          {isActive && (
             <button
               className="btn"
               onClick={handleCancel}
-              disabled={isStopping}
-              style={{ color: isStopping ? 'var(--text-muted)' : 'var(--red)' }}
+              disabled={isCancelling || isPending}
+              style={{ color: isCancelling ? 'var(--text-muted)' : 'var(--red)' }}
             >
-              {isStopping ? 'Stopping…' : 'Stop'}
+              {isCancelling ? 'Stopping…' : 'Stop'}
             </button>
           )}
         </div>
       </div>
 
       {/* Status */}
-      {status && (
+      {(activeJob || lastJob) && (
         <div className="scan-grid">
           <div className="card">
             <div className="card-title">Status</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span className={`pill ${status.running ? 'green' : status.error ? 'red' : 'grey'}`} />
+              <span className={`pill ${isRunning ? 'green' : activeJob?.error ? 'red' : 'grey'}`} />
               <span style={{ fontWeight: 600 }}>
-                {status.running ? 'Running' : status.error ? 'Error' : status.cancelled ? 'Cancelled' : status.end_time ? 'Completed' : 'Idle'}
+                {isPending ? 'Queued'
+                  : isCancelling ? 'Stopping'
+                  : isRunning ? 'Running'
+                  : lastJob?.status === 'completed' ? 'Completed'
+                  : lastJob?.status === 'cancelled' ? 'Cancelled'
+                  : lastJob?.status === 'failed' ? 'Error'
+                  : 'Idle'}
               </span>
             </div>
-            {status.scan_path && status.running && (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, fontFamily: 'monospace' }}>
-                {status.scan_path}
-              </div>
-            )}
-            {status.running && status.phase === 'discovering' && (
+            {activeJob?.phase === 'discovering' && isRunning && (
               <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
                 <span className="spinner" style={{ marginRight: 6 }} />
-                Discovering files… {status.total > 0 && `${status.total.toLocaleString()} found so far`}
+                Discovering files… {activeJob.total > 0 && `${activeJob.total.toLocaleString()} found so far`}
               </div>
             )}
-            {status.running && status.phase === 'scanning' && (
+            {activeJob?.phase === 'scanning' && isRunning && (
               <>
                 <div className="progress-track">
                   <div className="progress-fill" style={{ width: `${pct}%` }} />
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                  {pct}% · {status.progress.toLocaleString()} of {status.total.toLocaleString()} files
+                  {pct}% · {activeJob.progress.toLocaleString()} of {activeJob.total.toLocaleString()} files
                 </div>
-                <div className="scan-file">{status.current_file}</div>
+                <div className="scan-file">{activeJob.current_file}</div>
               </>
             )}
-            {status.running && status.phase === 'stopping' && (
+            {isCancelling && (
               <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
                 <span className="spinner" style={{ marginRight: 6 }} />
                 Stopping… finishing in-progress checksums
               </div>
             )}
-            {status.error && (
-              <div style={{ fontSize: 13, color: 'var(--red)', marginTop: 4 }}>{status.error}</div>
+            {lastJob?.error && !activeJob && (
+              <div style={{ fontSize: 13, color: 'var(--red)', marginTop: 4 }}>{lastJob.error}</div>
             )}
           </div>
 
@@ -274,18 +298,18 @@ export default function ScanControl() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Files processed</div>
-                <div style={{ fontWeight: 700, fontSize: 20 }}>{status.progress.toLocaleString()}</div>
+                <div style={{ fontWeight: 700, fontSize: 20 }}>{(displayJob?.progress || 0).toLocaleString()}</div>
               </div>
               <div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Errors</div>
-                <div style={{ fontWeight: 700, fontSize: 20, color: status.errors > 0 ? 'var(--red)' : undefined }}>
-                  {status.errors}
+                <div style={{ fontWeight: 700, fontSize: 20, color: (displayJob?.errors || 0) > 0 ? 'var(--red)' : undefined }}>
+                  {displayJob?.errors || 0}
                 </div>
               </div>
-              {status.start_time && (
+              {displayJob?.started_at && (
                 <div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Started</div>
-                  <div style={{ fontSize: 13 }}>{new Date(status.start_time).toLocaleTimeString()}</div>
+                  <div style={{ fontSize: 13 }}>{new Date(displayJob.started_at).toLocaleTimeString()}</div>
                 </div>
               )}
               {duration !== null && (
