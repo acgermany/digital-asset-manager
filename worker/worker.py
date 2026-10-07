@@ -3,12 +3,16 @@ import hashlib
 import json
 import os
 import shutil
-import sqlite3
-import subprocess
 import time
 from datetime import datetime
 
-DB_PATH           = os.environ.get("DB_PATH",           "/data/inventory.db")
+from sqlalchemy import create_engine, text, event
+from sqlalchemy.pool import StaticPool
+
+DB_URL           = (
+    os.environ.get("DB_URL")
+    or "sqlite:///{}".format(os.environ.get("DB_PATH", "/data/inventory.db"))
+)
 SCAN_PATH         = os.environ.get("SCAN_PATH",         "/scan")
 INGEST_PATH       = os.environ.get("INGEST_PATH",       "/nas/ingest")           # root (duplicates/ rejected/ live here)
 INGEST_WATCH_PATH = os.environ.get("INGEST_WATCH_PATH", "/nas/ingest/to_index")  # hot folder watcher watches
@@ -28,11 +32,44 @@ AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.aac', '.m4a', '.aiff', '.ogg', '.opus'}
 DOC_EXTS   = {'.pdf', '.txt', '.md'}
 
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+def _make_engine():
+    if DB_URL.startswith("sqlite"):
+        _engine = create_engine(
+            DB_URL,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        @event.listens_for(_engine, "connect")
+        def _set_wal(dbapi_conn, _):
+            dbapi_conn.execute("PRAGMA journal_mode=WAL")
+        return _engine
+    return create_engine(DB_URL)
+
+engine = _make_engine()
+
+def _is_sqlite() -> bool:
+    return engine.dialect.name == "sqlite"
+
+def get_db():
+    return engine.connect()
+
+
+def _upsert_file_inventory_sql() -> str:
+    """SQL to insert/replace a file record from a scan (used in run_scan batch)."""
+    if _is_sqlite():
+        return """INSERT OR REPLACE INTO file_inventory
+            (filepath, filename, filesize, sha256, scan_date)
+            VALUES (:filepath, :filename, :filesize, :sha256, CURRENT_TIMESTAMP)"""
+    return """INSERT INTO file_inventory
+        (filepath, filename, filesize, sha256, scan_date)
+        VALUES (:filepath, :filename, :filesize, :sha256, CURRENT_TIMESTAMP)
+        ON CONFLICT (filepath, sha256) DO UPDATE SET
+            filesize=EXCLUDED.filesize, scan_date=EXCLUDED.scan_date"""
+
+def _insert_or_ignore(table: str, cols: str, placeholders: str) -> str:
+    if _is_sqlite():
+        return f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})"
+    return f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
 
 
 # ---------------------------------------------------------------------------
@@ -61,12 +98,16 @@ def run_scan(job_id: int, scan_path: str, workers: int) -> None:
 
     def update(**kw):
         kw["updated_at"] = datetime.now().isoformat()
-        sets = ", ".join(f"{k}=?" for k in kw)
-        conn.execute(f"UPDATE jobs SET {sets} WHERE id=?", (*kw.values(), job_id))
+        sets = ", ".join(f"{k}=:{k}" for k in kw)
+        params = dict(kw)
+        params["job_id"] = job_id
+        conn.execute(text(f"UPDATE jobs SET {sets} WHERE id=:job_id"), params)
         conn.commit()
 
     def should_stop() -> bool:
-        row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        row = conn.execute(
+            text("SELECT status FROM jobs WHERE id=:id"), {"id": job_id}
+        ).mappings().fetchone()
         return row and row["status"] == "cancelling"
 
     try:
@@ -121,11 +162,7 @@ def run_scan(job_id: int, scan_path: str, workers: int) -> None:
                     errors += 1
 
                 if len(batch) >= 100:
-                    scan_conn.executemany("""
-                        INSERT OR REPLACE INTO file_inventory
-                            (filepath, filename, filesize, sha256, scan_date)
-                        VALUES (:filepath, :filename, :filesize, :sha256, CURRENT_TIMESTAMP)
-                    """, batch)
+                    scan_conn.execute(text(_upsert_file_inventory_sql()), batch)
                     scan_conn.commit()
                     batch.clear()
 
@@ -135,11 +172,7 @@ def run_scan(job_id: int, scan_path: str, workers: int) -> None:
             ex.shutdown(wait=True, cancel_futures=True)
 
         if batch and not should_stop():
-            scan_conn.executemany("""
-                INSERT OR REPLACE INTO file_inventory
-                    (filepath, filename, filesize, sha256, scan_date)
-                VALUES (:filepath, :filename, :filesize, :sha256, CURRENT_TIMESTAMP)
-            """, batch)
+            scan_conn.execute(text(_upsert_file_inventory_sql()), batch)
             scan_conn.commit()
 
         scan_conn.close()
@@ -159,17 +192,17 @@ def run_scan(job_id: int, scan_path: str, workers: int) -> None:
 def _queue_mediainfo_for_scan(scan_path: str) -> None:
     conn = get_db()
     try:
-        rows = conn.execute("""
+        rows = conn.execute(text("""
             SELECT f.id, f.filename FROM file_inventory f
             LEFT JOIN media_info m ON m.file_id = f.id
             WHERE m.file_id IS NULL
-        """).fetchall()
+        """)).mappings().fetchall()
         media_ids = [r["id"] for r in rows
                      if os.path.splitext(r["filename"])[1].lower() in MEDIA_EXTS]
         if media_ids:
             conn.execute(
-                "INSERT INTO jobs (type, params) VALUES ('mediainfo', ?)",
-                (json.dumps({"file_ids": media_ids}),)
+                text("INSERT INTO jobs (type, params) VALUES ('mediainfo', :params)"),
+                {"params": json.dumps({"file_ids": media_ids})}
             )
             conn.commit()
             print(f"Queued mediainfo job for {len(media_ids)} media files", flush=True)
@@ -180,6 +213,8 @@ def _queue_mediainfo_for_scan(scan_path: str) -> None:
 # ---------------------------------------------------------------------------
 # MediaInfo
 # ---------------------------------------------------------------------------
+
+import subprocess
 
 def _parse_mediainfo(raw: dict) -> dict:
     tracks  = raw.get("media", {}).get("track", [])
@@ -215,8 +250,10 @@ def run_mediainfo(job_id: int, file_ids: list[int]) -> None:
 
     def update(**kw):
         kw["updated_at"] = datetime.now().isoformat()
-        sets = ", ".join(f"{k}=?" for k in kw)
-        conn.execute(f"UPDATE jobs SET {sets} WHERE id=?", (*kw.values(), job_id))
+        sets = ", ".join(f"{k}=:{k}" for k in kw)
+        params = dict(kw)
+        params["job_id"] = job_id
+        conn.execute(text(f"UPDATE jobs SET {sets} WHERE id=:job_id"), params)
         conn.commit()
 
     total    = len(file_ids)
@@ -228,8 +265,8 @@ def run_mediainfo(job_id: int, file_ids: list[int]) -> None:
 
         for file_id in file_ids:
             row = conn.execute(
-                "SELECT filepath FROM file_inventory WHERE id=?", (file_id,)
-            ).fetchone()
+                text("SELECT filepath FROM file_inventory WHERE id=:id"), {"id": file_id}
+            ).mappings().fetchone()
             if not row or not os.path.isfile(row["filepath"]):
                 errors += 1
                 progress += 1
@@ -249,20 +286,55 @@ def run_mediainfo(job_id: int, file_ids: list[int]) -> None:
                 raw = json.loads(result.stdout)
                 fields = _parse_mediainfo(raw)
 
-                conn.execute("""
-                    INSERT OR REPLACE INTO media_info
-                        (file_id, duration, format, video_codec, width, height,
-                         frame_rate, timecode, bit_rate, audio_codec, audio_channels,
-                         audio_sample_rate, raw_json, scanned_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (
-                    file_id,
-                    fields["duration"], fields["format"], fields["video_codec"],
-                    fields["width"], fields["height"], fields["frame_rate"],
-                    fields["timecode"], fields["bit_rate"], fields["audio_codec"],
-                    fields["audio_channels"], fields["audio_sample_rate"],
-                    result.stdout,
-                ))
+                if _is_sqlite():
+                    conn.execute(text("""
+                        INSERT OR REPLACE INTO media_info
+                            (file_id, duration, format, video_codec, width, height,
+                             frame_rate, timecode, bit_rate, audio_codec, audio_channels,
+                             audio_sample_rate, raw_json, scanned_at)
+                        VALUES (:file_id, :duration, :format, :video_codec, :width, :height,
+                                :frame_rate, :timecode, :bit_rate, :audio_codec, :audio_channels,
+                                :audio_sample_rate, :raw_json, CURRENT_TIMESTAMP)
+                    """), {
+                        "file_id": file_id,
+                        "duration": fields["duration"], "format": fields["format"],
+                        "video_codec": fields["video_codec"],
+                        "width": fields["width"], "height": fields["height"],
+                        "frame_rate": fields["frame_rate"], "timecode": fields["timecode"],
+                        "bit_rate": fields["bit_rate"], "audio_codec": fields["audio_codec"],
+                        "audio_channels": fields["audio_channels"],
+                        "audio_sample_rate": fields["audio_sample_rate"],
+                        "raw_json": result.stdout,
+                    })
+                else:
+                    conn.execute(text("""
+                        INSERT INTO media_info
+                            (file_id, duration, format, video_codec, width, height,
+                             frame_rate, timecode, bit_rate, audio_codec, audio_channels,
+                             audio_sample_rate, raw_json, scanned_at)
+                        VALUES (:file_id, :duration, :format, :video_codec, :width, :height,
+                                :frame_rate, :timecode, :bit_rate, :audio_codec, :audio_channels,
+                                :audio_sample_rate, :raw_json, CURRENT_TIMESTAMP)
+                        ON CONFLICT (file_id) DO UPDATE SET
+                            duration=EXCLUDED.duration, format=EXCLUDED.format,
+                            video_codec=EXCLUDED.video_codec, width=EXCLUDED.width,
+                            height=EXCLUDED.height, frame_rate=EXCLUDED.frame_rate,
+                            timecode=EXCLUDED.timecode, bit_rate=EXCLUDED.bit_rate,
+                            audio_codec=EXCLUDED.audio_codec,
+                            audio_channels=EXCLUDED.audio_channels,
+                            audio_sample_rate=EXCLUDED.audio_sample_rate,
+                            raw_json=EXCLUDED.raw_json, scanned_at=EXCLUDED.scanned_at
+                    """), {
+                        "file_id": file_id,
+                        "duration": fields["duration"], "format": fields["format"],
+                        "video_codec": fields["video_codec"],
+                        "width": fields["width"], "height": fields["height"],
+                        "frame_rate": fields["frame_rate"], "timecode": fields["timecode"],
+                        "bit_rate": fields["bit_rate"], "audio_codec": fields["audio_codec"],
+                        "audio_channels": fields["audio_channels"],
+                        "audio_sample_rate": fields["audio_sample_rate"],
+                        "raw_json": result.stdout,
+                    })
                 conn.commit()
 
             except Exception as e:
@@ -291,8 +363,10 @@ def run_workflow(job_id: int, workflow: str, file_ids: list[int]) -> None:
 
     def update(**kw):
         kw["updated_at"] = datetime.now().isoformat()
-        sets = ", ".join(f"{k}=?" for k in kw)
-        conn.execute(f"UPDATE jobs SET {sets} WHERE id=?", (*kw.values(), job_id))
+        sets = ", ".join(f"{k}=:{k}" for k in kw)
+        params = dict(kw)
+        params["job_id"] = job_id
+        conn.execute(text(f"UPDATE jobs SET {sets} WHERE id=:job_id"), params)
         conn.commit()
 
     script = os.path.join(WORKFLOWS_PATH, workflow)
@@ -311,8 +385,8 @@ def run_workflow(job_id: int, workflow: str, file_ids: list[int]) -> None:
 
         for file_id in file_ids:
             row = conn.execute(
-                "SELECT filepath FROM file_inventory WHERE id=?", (file_id,)
-            ).fetchone()
+                text("SELECT filepath FROM file_inventory WHERE id=:id"), {"id": file_id}
+            ).mappings().fetchone()
             if not row:
                 errors += 1
                 progress += 1
@@ -500,8 +574,10 @@ def run_ingest(job_id: int, file_path: str, ingest_source: str, initials: str) -
 
     def update(**kw):
         kw["updated_at"] = datetime.now().isoformat()
-        sets = ", ".join(f"{k}=?" for k in kw)
-        conn.execute(f"UPDATE jobs SET {sets} WHERE id=?", (*kw.values(), job_id))
+        sets = ", ".join(f"{k}=:{k}" for k in kw)
+        params = dict(kw)
+        params["job_id"] = job_id
+        conn.execute(text(f"UPDATE jobs SET {sets} WHERE id=:job_id"), params)
         conn.commit()
 
     try:
@@ -511,9 +587,9 @@ def run_ingest(job_id: int, file_path: str, ingest_source: str, initials: str) -
         if not os.path.isfile(file_path):
             # Check if a parallel job already processed this file (moved it out of to_index/)
             already = conn.execute(
-                "SELECT id FROM file_inventory WHERE original_filename=? AND status IN ('staged','archived')",
-                (os.path.basename(file_path),)
-            ).fetchone()
+                text("SELECT id FROM file_inventory WHERE original_filename=:name AND status IN ('staged','archived')"),
+                {"name": os.path.basename(file_path)}
+            ).mappings().fetchone()
             if already:
                 update(status="completed", phase="skipped",
                        completed_at=datetime.now().isoformat(),
@@ -540,9 +616,9 @@ def run_ingest(job_id: int, file_path: str, ingest_source: str, initials: str) -
 
         # 3. Duplicate check against staged or archived files
         existing = conn.execute(
-            "SELECT id, filepath FROM file_inventory WHERE sha256=? AND status IN ('staged','archived')",
-            (checksum,)
-        ).fetchone()
+            text("SELECT id, filepath FROM file_inventory WHERE sha256=:sha256 AND status IN ('staged','archived')"),
+            {"sha256": checksum}
+        ).mappings().fetchone()
         if existing:
             dup_dir = os.path.join(INGEST_PATH, "duplicates")
             os.makedirs(dup_dir, exist_ok=True)
@@ -554,15 +630,18 @@ def run_ingest(job_id: int, file_path: str, ingest_source: str, initials: str) -
                 print(f"Warning: could not move duplicate to duplicates/: {e}", flush=True)
 
             # Record the duplicate
-            conn.execute("""
-                INSERT OR IGNORE INTO file_inventory
-                    (filepath, filename, filesize, sha256, status, ingest_date, ingest_source, initials)
-                VALUES (?, ?, ?, ?, 'duplicate', CURRENT_TIMESTAMP, ?, ?)
-            """, (
-                dup_dest, os.path.basename(file_path),
-                os.path.getsize(dup_dest) if os.path.exists(dup_dest) else 0,
-                checksum, ingest_source, initials,
-            ))
+            conn.execute(text(_insert_or_ignore(
+                "file_inventory",
+                "filepath, filename, filesize, sha256, status, ingest_date, ingest_source, initials",
+                ":filepath, :filename, :filesize, :sha256, 'duplicate', CURRENT_TIMESTAMP, :ingest_source, :initials"
+            )), {
+                "filepath": dup_dest,
+                "filename": os.path.basename(file_path),
+                "filesize": os.path.getsize(dup_dest) if os.path.exists(dup_dest) else 0,
+                "sha256": checksum,
+                "ingest_source": ingest_source,
+                "initials": initials,
+            })
             conn.commit()
             update(status="completed", phase="duplicate",
                    error=f"Duplicate of file #{existing['id']} ({existing['filepath']})",
@@ -639,26 +718,35 @@ def run_ingest(job_id: int, file_path: str, ingest_source: str, initials: str) -
 
         # 8. Insert record — staged_path is the to_archive/ location
         filesize = os.path.getsize(staging_path)
-        cur = conn.execute("""
+        cur = conn.execute(text("""
             INSERT INTO file_inventory
                 (filepath, filename, filesize, sha256, status,
                  original_filename, ingest_source, initials, category,
                  staged_path, archive_path, ingest_date, collision)
-            VALUES (?, ?, ?, ?, 'staged', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
-        """, (
-            staging_path, original_filename,
-            filesize, checksum,
-            original_filename, ingest_source, initials, category,
-            staging_path, proposed_archive, 1 if collision else 0,
-        ))
+            VALUES (:filepath, :filename, :filesize, :sha256, 'staged', :original_filename,
+                    :ingest_source, :initials, :category,
+                    :staged_path, :archive_path, CURRENT_TIMESTAMP, :collision)
+        """), {
+            "filepath": staging_path,
+            "filename": original_filename,
+            "filesize": filesize,
+            "sha256": checksum,
+            "original_filename": original_filename,
+            "ingest_source": ingest_source,
+            "initials": initials,
+            "category": category,
+            "staged_path": staging_path,
+            "archive_path": proposed_archive,
+            "collision": 1 if collision else 0,
+        })
         conn.commit()
         file_id = cur.lastrowid
 
         # 9. Queue mediainfo
         if ext in MEDIA_EXTS:
             conn.execute(
-                "INSERT INTO jobs (type, params) VALUES ('mediainfo', ?)",
-                (json.dumps({"file_ids": [file_id]}),)
+                text("INSERT INTO jobs (type, params) VALUES ('mediainfo', :params)"),
+                {"params": json.dumps({"file_ids": [file_id]})}
             )
             conn.commit()
 
@@ -681,17 +769,19 @@ def run_promote(job_id: int, file_id: int, archive_path_override: str | None = N
 
     def update(**kw):
         kw["updated_at"] = datetime.now().isoformat()
-        sets = ", ".join(f"{k}=?" for k in kw)
-        conn.execute(f"UPDATE jobs SET {sets} WHERE id=?", (*kw.values(), job_id))
+        sets = ", ".join(f"{k}=:{k}" for k in kw)
+        params = dict(kw)
+        params["job_id"] = job_id
+        conn.execute(text(f"UPDATE jobs SET {sets} WHERE id=:job_id"), params)
         conn.commit()
 
     try:
         update(status="running", started_at=datetime.now().isoformat(), phase="promoting")
 
         row = conn.execute(
-            "SELECT staged_path, archive_path, sha256 FROM file_inventory WHERE id=?",
-            (file_id,)
-        ).fetchone()
+            text("SELECT staged_path, archive_path, sha256 FROM file_inventory WHERE id=:id"),
+            {"id": file_id}
+        ).mappings().fetchone()
         if not row:
             update(status="failed", error=f"File record not found: id={file_id}",
                    completed_at=datetime.now().isoformat(), phase="failed")
@@ -729,12 +819,12 @@ def run_promote(job_id: int, file_id: int, archive_path_override: str | None = N
             print(f"Warning: could not delete staged copy {staged_path}: {e}", flush=True)
 
         # Update DB record
-        conn.execute("""
+        conn.execute(text("""
             UPDATE file_inventory
             SET status='archived', archived_date=CURRENT_TIMESTAMP,
-                filepath=?, archive_path=?, staged_path=NULL
-            WHERE id=?
-        """, (archive_path, archive_path, file_id))
+                filepath=:filepath, archive_path=:archive_path, staged_path=NULL
+            WHERE id=:id
+        """), {"filepath": archive_path, "archive_path": archive_path, "id": file_id})
         conn.commit()
 
         update(status="completed", completed_at=datetime.now().isoformat(),
@@ -755,15 +845,15 @@ def claim_next_job():
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT * FROM jobs WHERE status='pending' ORDER BY created_at LIMIT 1"
-        ).fetchone()
+            text("SELECT * FROM jobs WHERE status='pending' ORDER BY created_at LIMIT 1")
+        ).mappings().fetchone()
         if not row:
             return None
         conn.execute(
-            """UPDATE jobs SET status='running', started_at=CURRENT_TIMESTAMP,
+            text("""UPDATE jobs SET status='running', started_at=CURRENT_TIMESTAMP,
                updated_at=CURRENT_TIMESTAMP, phase='starting'
-               WHERE id=? AND status='pending'""",
-            (row["id"],)
+               WHERE id=:id AND status='pending'"""),
+            {"id": row["id"]}
         )
         conn.commit()
         return dict(row)
@@ -772,12 +862,12 @@ def claim_next_job():
 
 
 def main():
-    print(f"Worker started. DB={DB_PATH} INGEST={INGEST_PATH} ARCHIVE={ARCHIVE_PATH}", flush=True)
+    print(f"Worker started. DB={DB_URL} INGEST={INGEST_PATH} ARCHIVE={ARCHIVE_PATH}", flush=True)
     # Wait for the API to initialise the DB (depends_on only waits for container start)
     while True:
         try:
             conn = get_db()
-            conn.execute("SELECT 1 FROM jobs LIMIT 1")
+            conn.execute(text("SELECT 1 FROM jobs LIMIT 1"))
             conn.close()
             break
         except Exception:

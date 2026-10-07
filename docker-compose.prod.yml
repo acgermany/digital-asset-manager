@@ -15,9 +15,10 @@ services:
     volumes:
       - /mnt/nas:/nas/ingest
       - /mnt/archive:/nas/archive
-      - ./data:/data
+      - /opt/dam/data:/data
     environment:
       - DB_PATH=/data/inventory.db
+      - DB_URL=sqlite:////data/inventory.db
       - SCAN_PATH=/nas/ingest
       - INGEST_PATH=/nas/ingest
       - ARCHIVE_PATH=/nas/archive
@@ -38,10 +39,11 @@ services:
     volumes:
       - /mnt/nas:/nas/ingest
       - /mnt/archive:/nas/archive
-      - ./data:/data
+      - /opt/dam/data:/data
       - ./workflows:/workflows
     environment:
       - DB_PATH=/data/inventory.db
+      - DB_URL=sqlite:////data/inventory.db
       - SCAN_PATH=/nas/ingest
       - INGEST_PATH=/nas/ingest
       - INGEST_WATCH_PATH=/nas/ingest/to_index
@@ -57,9 +59,10 @@ services:
     container_name: dam-watcher
     volumes:
       - /mnt/nas:/nas/ingest
-      - ./data:/data
+      - /opt/dam/data:/data
     environment:
       - DB_PATH=/data/inventory.db
+      - DB_URL=sqlite:////data/inventory.db
       - INGEST_PATH=/nas/ingest/to_index
       - PHONE_SOURCES=ag:/nas/homes/auston/Photos/MobileBackup/iPhone (11)
     depends_on:

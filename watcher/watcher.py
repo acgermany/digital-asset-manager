@@ -13,13 +13,17 @@ Folder layout under /nas/ingest:
 import fnmatch
 import json
 import os
-import sqlite3
 import time
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers.polling import PollingObserver as Observer
+from sqlalchemy import create_engine, text, event
+from sqlalchemy.pool import StaticPool
 
-DB_PATH       = os.environ.get("DB_PATH",       "/data/inventory.db")
+DB_URL        = (
+    os.environ.get("DB_URL")
+    or "sqlite:///{}".format(os.environ.get("DB_PATH", "/data/inventory.db"))
+)
 INGEST_PATH   = os.environ.get("INGEST_PATH",   "/nas/ingest/to_index")
 # Comma-separated list of "initials:/glob/path/iPhone*" entries
 PHONE_SOURCES = os.environ.get("PHONE_SOURCES", "")
@@ -28,29 +32,58 @@ PHONE_SOURCES = os.environ.get("PHONE_SOURCES", "")
 _MIN_BYTES = 1
 
 
-def _get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+def _make_engine():
+    if DB_URL.startswith("sqlite"):
+        _engine = create_engine(
+            DB_URL,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        @event.listens_for(_engine, "connect")
+        def _set_wal(dbapi_conn, _):
+            dbapi_conn.execute("PRAGMA journal_mode=WAL")
+        return _engine
+    return create_engine(DB_URL)
+
+engine = _make_engine()
+
+def _is_sqlite() -> bool:
+    return engine.dialect.name == "sqlite"
+
+def _get_db():
+    return engine.connect()
+
+
+def _recent_completed_expr() -> str:
+    if _is_sqlite():
+        return "created_at > datetime('now', '-60 seconds')"
+    return "created_at > NOW() - INTERVAL '60 seconds'"
 
 
 def _seed_sources() -> None:
     """Seed watcher_sources table from env vars on first start (if table is empty)."""
     conn = _get_db()
     try:
-        if conn.execute("SELECT COUNT(*) FROM watcher_sources").fetchone()[0] > 0:
+        if conn.execute(text("SELECT COUNT(*) FROM watcher_sources")).scalar() > 0:
             return
-        conn.execute("""
-            INSERT OR IGNORE INTO watcher_sources (name, path, initials, source_type, enabled)
-            VALUES ('Hot Folder', ?, '', 'hot_folder', 1)
-        """, (INGEST_PATH,))
+        _insert_or_ignore_sql = (
+            "INSERT OR IGNORE INTO watcher_sources (name, path, initials, source_type, enabled) "
+            "VALUES (:name, :path, :initials, :source_type, 1)"
+            if _is_sqlite() else
+            "INSERT INTO watcher_sources (name, path, initials, source_type, enabled) "
+            "VALUES (:name, :path, :initials, :source_type, 1) ON CONFLICT DO NOTHING"
+        )
+        conn.execute(text(_insert_or_ignore_sql), {
+            "name": "Hot Folder", "path": INGEST_PATH, "initials": "", "source_type": "hot_folder"
+        })
         if PHONE_SOURCES:
             for initials, pattern in _parse_phone_sources(PHONE_SOURCES):
-                conn.execute("""
-                    INSERT OR IGNORE INTO watcher_sources (name, path, initials, source_type, enabled)
-                    VALUES (?, ?, ?, 'phone_dump', 1)
-                """, (f"Phone ({initials}): {os.path.basename(pattern)}", pattern, initials))
+                conn.execute(text(_insert_or_ignore_sql), {
+                    "name": f"Phone ({initials}): {os.path.basename(pattern)}",
+                    "path": pattern,
+                    "initials": initials,
+                    "source_type": "phone_dump",
+                })
         conn.commit()
         print("[watcher] seeded watcher_sources from env vars", flush=True)
     except Exception as e:
@@ -64,9 +97,9 @@ def _is_source_enabled(source_type: str, path: str) -> bool:
     try:
         conn = _get_db()
         row = conn.execute(
-            "SELECT enabled FROM watcher_sources WHERE source_type=? AND path=?",
-            (source_type, path)
-        ).fetchone()
+            text("SELECT enabled FROM watcher_sources WHERE source_type=:stype AND path=:path"),
+            {"stype": source_type, "path": path}
+        ).mappings().fetchone()
         conn.close()
         return row is None or bool(row["enabled"])
     except Exception:
@@ -79,24 +112,24 @@ def _create_ingest_job(file_path: str, ingest_source: str, initials: str) -> Non
         # Skip if an ingest job for this path is already pending, running,
         # or completed within the last 60 seconds (catches startup-scan + watchdog races)
         existing = conn.execute(
-            """SELECT id FROM jobs WHERE type='ingest' AND params LIKE ?
+            text(f"""SELECT id FROM jobs WHERE type='ingest' AND params LIKE :pattern
                AND (
                    status IN ('pending','running')
-                   OR (status = 'completed' AND created_at > datetime('now', '-60 seconds'))
-               )""",
-            (f'%{file_path}%',)
-        ).fetchone()
+                   OR (status = 'completed' AND {_recent_completed_expr()})
+               )"""),
+            {"pattern": f"%{file_path}%"}
+        ).mappings().fetchone()
         if existing:
             print(f"[watcher] skipping already-queued: {file_path}", flush=True)
             conn.close()
             return
         conn.execute(
-            "INSERT INTO jobs (type, params) VALUES ('ingest', ?)",
-            (json.dumps({
+            text("INSERT INTO jobs (type, params) VALUES ('ingest', :params)"),
+            {"params": json.dumps({
                 "file_path":     file_path,
                 "ingest_source": ingest_source,
                 "initials":      initials,
-            }),)
+            })}
         )
         conn.commit()
         conn.close()
@@ -233,7 +266,7 @@ def main() -> None:
     while True:
         try:
             conn = _get_db()
-            conn.execute("SELECT 1 FROM jobs LIMIT 1")
+            conn.execute(text("SELECT 1 FROM jobs LIMIT 1"))
             conn.close()
             break
         except Exception:
