@@ -32,16 +32,28 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)  # status polls every few seconds
     wait_for_db()
 
+    from sqlalchemy import text
+
     from .core.mounts import mount_all
     from .db import SessionLocal
     with SessionLocal() as session:
         mount_all(session)
+        # Every worker lives in this container, so anything still "running" was
+        # interrupted by the restart: resume it now rather than after the stale timeout.
+        resumed = session.execute(text("""
+            UPDATE jobs SET status = CASE WHEN status = 'cancelling' THEN 'cancelled' ELSE 'queued' END,
+                            locked_by = NULL
+            WHERE status IN ('running', 'cancelling')""")).rowcount
+        session.commit()
+        if resumed:
+            log.info("resumed %d interrupted job(s)", resumed)
 
     workers = int(os.environ.get("WORKERS", "2"))
     commands = {
         "api": [sys.executable, "-m", "uvicorn", "dam.api.app:app", "--host", "0.0.0.0", "--port", "8000"],
         "watcher": [sys.executable, "-m", "dam.watcher"],
         "ai-worker": [sys.executable, "-m", "dam.ai_worker"],
+        "vision-worker": [sys.executable, "-m", "dam.ai_worker", "--vision"],
         **{f"worker-{i}": [sys.executable, "-m", "dam.worker"] for i in range(workers)},
     }
     procs = {name: subprocess.Popen(cmd) for name, cmd in commands.items()}

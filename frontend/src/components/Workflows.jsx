@@ -3,8 +3,9 @@ import Review from './Review'
 import Duplicates from './Duplicates'
 import ScanControl from './ScanControl'
 import Embeddings from './Embeddings'
+import Descriptions from './Descriptions'
 
-const WORKFLOWS = ['Ingest', 'Review', 'Duplicates', 'Scan', 'Embeddings']
+const WORKFLOWS = ['Ingest', 'Review', 'Duplicates', 'Scan', 'AI']
 
 export default function Workflows({ active, onSelect, onConfigure }) {
   return (
@@ -25,7 +26,11 @@ export default function Workflows({ active, onSelect, onConfigure }) {
       {active === 'Review'     && <Review />}
       {active === 'Duplicates' && <Duplicates />}
       {active === 'Scan'       && <ScanControl />}
-      {active === 'Embeddings' && <Embeddings onConfigure={onConfigure} />}
+      {active === 'AI' && <>
+        <Descriptions onConfigure={onConfigure} />
+        <div style={{ height: 12 }} />
+        <Embeddings onConfigure={onConfigure} />
+      </>}
     </>
   )
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, fmtBytes } from '../api'
 import FolderPicker from './FolderPicker'
+import AISettings from './AISettings'
 
 function Status({ ok, warn, children }) {
   return <span className={`status-chip ${ok ? 'ok' : warn ? 'warn' : 'bad'}`}>{children}</span>
@@ -118,15 +119,11 @@ export default function Configure() {
   const [notice, setNotice]   = useState(null)
   const [picker, setPicker]   = useState(null)   // { key, title, writable }
   const [adding, setAdding]   = useState(false)
-  const [ai, setAi]           = useState({ ollama_url: '', embed_model: '' })
-  const [aiTest, setAiTest]   = useState(null)
-  const [testing, setTesting] = useState(false)
 
   const load = useCallback(async () => {
     try {
       const c = await api.config()
       setCfg(c)
-      setAi({ ollama_url: c.settings.ollama_url, embed_model: c.settings.embed_model })
       setErr(null)
     } catch (e) {
       setErr(e.message)
@@ -167,16 +164,6 @@ export default function Configure() {
     } catch (e) {
       setErr(e.message)
     }
-  }
-
-  const testConnection = async () => {
-    setTesting(true)
-    setAiTest(null)
-    const ok = await save(ai, 'AI settings saved')
-    if (ok) {
-      try { setAiTest(await api.testAI()) } catch (e) { setAiTest({ reachable: false, error: e.message }) }
-    }
-    setTesting(false)
   }
 
   if (!cfg) {
@@ -300,29 +287,8 @@ export default function Configure() {
         ))}
       </Section>
 
-      <Section title="AI (Ollama)" sub="Embedding model on your Mac, used for semantic search. Optional — everything else works without it.">
-        <div className="cfg-inline">
-          <label>Ollama URL
-            <input className="search" style={{ width: 300 }} value={ai.ollama_url} onChange={e => setAi(a => ({ ...a, ollama_url: e.target.value }))} />
-          </label>
-          <label>Embedding model
-            <input className="search" style={{ width: 200 }} value={ai.embed_model} onChange={e => setAi(a => ({ ...a, embed_model: e.target.value }))} />
-          </label>
-          <button className="btn sm primary" onClick={testConnection} disabled={testing}>{testing ? 'Testing…' : 'Save & test'}</button>
-        </div>
-        {aiTest && (
-          <div className="cfg-ai-result">
-            {aiTest.reachable
-              ? <Status ok={aiTest.model_installed} warn={!aiTest.model_installed}>{aiTest.model_installed ? 'Connected — model installed' : 'Connected — model missing'}</Status>
-              : <Status>Not reachable</Status>}
-            {aiTest.error && <span className="cfg-muted">{aiTest.error}</span>}
-          </div>
-        )}
-        <label className="cfg-toggle">
-          <input type="checkbox" checked={!!s.embed_sensitive_text} onChange={e => save({ embed_sensitive_text: e.target.checked })} />
-          Include (redacted) text of financial documents in embeddings
-        </label>
-        <div className="cfg-help">Vector size: {cfg.embed_dims} (must match the model; nomic-embed-text = 768).</div>
+      <Section title="AI (Ollama on your Mac)" sub="Optional — ingest, duplicates and keyword search work without it.">
+        <AISettings settings={s} defaults={cfg.defaults} embedDims={cfg.embed_dims} save={save} />
       </Section>
 
       {picker && (

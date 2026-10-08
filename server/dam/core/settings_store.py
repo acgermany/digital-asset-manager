@@ -7,6 +7,20 @@ from sqlalchemy.orm import Session
 from ..config import settings as env
 from ..models import AppSetting
 
+DEFAULT_IMAGE_PROMPT = (
+    "Describe this photo for a personal media library so it can be found by search later. "
+    "In 2-3 sentences cover: who or what is in it (people by apparent age or role, never guess names), "
+    "the setting and type of place, the activity or occasion, and notable objects, text or landmarks. "
+    "Then on a new line write 'Tags:' followed by 5-10 short, comma-separated keywords."
+)
+DEFAULT_VIDEO_PROMPT = (
+    "These {frames} frames are evenly spaced, in order, through a {duration} video. "
+    "Summarize the video for a personal media library in 2-4 sentences: who is in it (by apparent "
+    "age or role, never guess names), the setting, what happens from start to finish, and any "
+    "notable moments, objects or text. "
+    "Then on a new line write 'Tags:' followed by 5-10 short, comma-separated keywords."
+)
+
 DEFAULTS: dict = {
     "hotfolder": env.hotfolder,
     "hotfolder_enabled": True,
@@ -18,6 +32,18 @@ DEFAULTS: dict = {
     "embed_model": env.embed_model,
     "embed_keep_alive": env.embed_keep_alive,
     "embed_sensitive_text": env.embed_sensitive_text,
+    # Vision descriptions (captions for images, summaries for videos)
+    "describe_model": "qwen3-vl:8b",
+    "describe_image_prompt": DEFAULT_IMAGE_PROMPT,
+    "describe_video_prompt": DEFAULT_VIDEO_PROMPT,
+    "describe_kinds": ["image", "video"],
+    "describe_video_frames": 8,
+    "describe_frame_size": 768,
+    "describe_auto": False,
+    "describe_critical": False,
+    "describe_keep_alive": "10m",
+    "describe_think": False,
+    "describe_max_tokens": 4096,  # thinking models spend much of this before answering
 }
 
 EDITABLE = set(DEFAULTS)

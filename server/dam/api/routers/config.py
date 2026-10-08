@@ -53,6 +53,8 @@ def _config_payload(session: Session) -> dict:
         "drives": locations.drives(ms),
         "mounts": [_mount_info(m) for m in ms],
         "embed_dims": env.embed_dims,
+        "defaults": {k: settings_store.DEFAULTS[k] for k in ("describe_image_prompt", "describe_video_prompt",
+                                                            "describe_model")},
     }
 
 
@@ -84,6 +86,17 @@ class ConfigUpdate(BaseModel):
     embed_model: Optional[str] = None
     embed_keep_alive: Optional[str] = None
     embed_sensitive_text: Optional[bool] = None
+    describe_model: Optional[str] = None
+    describe_image_prompt: Optional[str] = None
+    describe_video_prompt: Optional[str] = None
+    describe_kinds: Optional[list[str]] = None
+    describe_video_frames: Optional[int] = None
+    describe_frame_size: Optional[int] = None
+    describe_auto: Optional[bool] = None
+    describe_critical: Optional[bool] = None
+    describe_keep_alive: Optional[str] = None
+    describe_think: Optional[bool] = None
+    describe_max_tokens: Optional[int] = None
 
 
 @router.put("/config")
@@ -134,8 +147,27 @@ def update_config(body: ConfigUpdate, session: Session = Depends(get_session)):
         if not re.match(r"^https?://[^\s/]+(:\d+)?(/.*)?$", url):
             raise HTTPException(400, "Ollama URL must look like http://host:11434")
         changes["ollama_url"] = url
-    if "embed_model" in changes and not re.match(r"^[\w.\-:/]{1,128}$", changes["embed_model"] or ""):
-        raise HTTPException(400, "Invalid model name")
+    for key in ("embed_model", "describe_model"):
+        if key in changes:
+            if not re.match(r"^[\w.\-:/]{1,128}$", changes[key] or ""):
+                raise HTTPException(400, "Invalid model name")
+            # Ollama treats "x" and "x:latest" as one model; store one spelling so
+            # embeddings/descriptions keyed by model name stay consistent.
+            changes[key] = re.sub(r":latest$", "", changes[key])
+    for key in ("describe_image_prompt", "describe_video_prompt"):
+        if key in changes:
+            changes[key] = (changes[key] or "").strip() or settings_store.DEFAULTS[key]
+            if len(changes[key]) > 4000:
+                raise HTTPException(400, "Prompts are limited to 4000 characters")
+    if "describe_kinds" in changes:
+        changes["describe_kinds"] = [k for k in changes["describe_kinds"] or [] if k in ("image", "video")]
+    for key, lo, hi in (("describe_video_frames", 1, 32), ("describe_frame_size", 256, 2048),
+                        ("describe_max_tokens", 128, 8192)):
+        if key in changes and not lo <= changes[key] <= hi:
+            raise HTTPException(400, f"{key} must be between {lo} and {hi}")
+    for key in ("embed_keep_alive", "describe_keep_alive"):
+        if key in changes and not re.match(r"^(-1|0|\d+(s|m|h))$", changes[key] or ""):
+            raise HTTPException(400, "Keep-alive must look like 10m, 1h, 0 or -1")
 
     # Mark the library so an unmounted drive/NAS is never mistaken for an empty library.
     if changes.get("library"):

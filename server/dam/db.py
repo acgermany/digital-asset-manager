@@ -41,7 +41,15 @@ def init_db() -> None:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
     with engine.begin() as conn:
         # Columns added after a table first existed (POC: no migration tool yet)
-        conn.execute(text("ALTER TABLE IF EXISTS assets ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'::jsonb"))
+        for ddl in (
+            "ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'::jsonb",
+            "ADD COLUMN IF NOT EXISTS description TEXT",
+            "ADD COLUMN IF NOT EXISTS description_tags JSONB DEFAULT '[]'::jsonb",
+            "ADD COLUMN IF NOT EXISTS description_model VARCHAR(128)",
+            "ADD COLUMN IF NOT EXISTS described_at TIMESTAMPTZ",
+            "ADD COLUMN IF NOT EXISTS description_error TEXT",
+        ):
+            conn.execute(text(f"ALTER TABLE IF EXISTS assets {ddl}"))
     models.Base.metadata.create_all(engine)
     with engine.begin() as conn:
         conn.execute(text(

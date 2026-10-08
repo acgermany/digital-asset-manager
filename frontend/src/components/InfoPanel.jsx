@@ -101,6 +101,14 @@ export default function InfoPanel({ fileId }) {
   }, [fileId])
 
   useEffect(() => { setD(null); load() }, [load])
+
+  // While a description is being written for this file, poll until it lands.
+  const pending = d?.asset?.describe_pending
+  useEffect(() => {
+    if (!pending) return
+    const t = setInterval(load, 2500)
+    return () => clearInterval(t)
+  }, [pending, load])
   useEffect(() => { api.tags().then(t => setSugg(t.tags)).catch(() => {}) }, [])
 
   const update = async (changes) => {
@@ -108,6 +116,15 @@ export default function InfoPanel({ fileId }) {
       const next = await api.updateAsset(d.asset.id, changes)
       setD({ file_id: fileId, ...next })
       if (changes.tags) api.tags().then(t => setSugg(t.tags)).catch(() => {})
+    } catch (e) {
+      setErr(e.message)
+    }
+  }
+
+  const describeNow = async () => {
+    try {
+      await api.describeAsset(d.asset.id)
+      setD(prev => ({ ...prev, asset: { ...prev.asset, describe_pending: true, description_error: null } }))
     } catch (e) {
       setErr(e.message)
     }
@@ -122,6 +139,35 @@ export default function InfoPanel({ fileId }) {
 
   return (
     <div className="info-panel">
+      {(a.kind === 'image' || a.kind === 'video') && (
+        <Section title={a.kind === 'video' ? 'Video summary' : 'Description'}>
+          {a.description
+            ? <>
+                <p className="info-desc">{a.description}</p>
+                {a.description_tags.length > 0 && (
+                  <div className="tag-editor" style={{ marginBottom: 6 }}>
+                    {a.description_tags.map(t => {
+                      const added = a.tags.some(x => x.toLowerCase() === t.toLowerCase())
+                      return (
+                        <button key={t} className={`ai-tag${added ? ' added' : ''}`} disabled={added}
+                                title={added ? 'Already a tag' : 'Add as a tag'} onClick={() => update({ tags: [...a.tags, t] })}>
+                          {added ? '✓ ' : '+ '}{t}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                <div className="cfg-muted">{a.description_model} · {when(a.described_at)}</div>
+              </>
+            : <div className="cfg-muted">{a.description_error || 'Not described yet.'}</div>}
+          <div style={{ marginTop: 8 }}>
+            {a.describe_pending
+              ? <span className="cfg-muted"><span className="spinner sm" /> Writing description… (loading the model can take a few seconds)</span>
+              : <button className="btn sm" onClick={describeNow}>{a.description ? 'Re-describe' : 'Describe now'}</button>}
+          </div>
+        </Section>
+      )}
+
       <Section title="Overview">
         <div className="info-row">
           <span className="info-label">Tier</span>

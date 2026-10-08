@@ -52,6 +52,13 @@ class Asset(Base):
 
     tags: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
 
+    # Vision-model description (images: caption; videos: summary of sampled frames)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    description_tags: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+    description_model: Mapped[Optional[str]] = mapped_column(String(128))
+    described_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    description_error: Mapped[Optional[str]] = mapped_column(Text)
+
     # Flattened text used for keyword search and as the embedding source
     search_text: Mapped[Optional[str]] = mapped_column(Text)
     metadata_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|done|failed

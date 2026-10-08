@@ -62,6 +62,12 @@ export const api = {
   startEmbed:     (reembed = false)    => jreq('/ai/embed', 'POST', { reembed }),
   cancelEmbed:    ()                   => req('/ai/embed/cancel', { method: 'POST' }),
   search:         (params)             => req('/search?' + new URLSearchParams(params)),
+  // Vision descriptions
+  describeStatus: ()                   => req('/ai/describe/status'),
+  startDescribe:  (redescribe = false) => jreq('/ai/describe', 'POST', { redescribe }),
+  cancelDescribe: ()                   => req('/ai/describe/cancel', { method: 'POST' }),
+  describeAsset:  (assetId)            => req(`/assets/${assetId}/describe`, { method: 'POST' }),
+  aiModels:       ()                   => req('/ai/models'),
   // Assets / library
   fileDetails:    (fileId)             => req(`/files/${fileId}/details`),
   updateAsset:    (assetId, changes)   => jreq(`/assets/${assetId}`, 'PATCH', changes),

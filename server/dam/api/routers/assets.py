@@ -11,7 +11,7 @@ from ...core import locations, metadata, settings_store
 from ...core.assets import normalize_tags, set_tags, set_tier
 from ...core.projection import similarity_map
 from ...db import get_session
-from ...models import TIERS, Asset, Embedding, Event, File, Ingest, Review, Segment
+from ...models import TIERS, Asset, Embedding, Event, File, Ingest, Job, Review, Segment
 from ..deps import mounts
 
 router = APIRouter()
@@ -45,6 +45,12 @@ def _asset_detail(session: Session, asset: Asset) -> dict:
             "protected": asset.protected, "needs_backup": asset.needs_backup,
             "tags": asset.tags or [], "metadata_status": asset.metadata_status,
             "search_text": asset.search_text,
+            "description": asset.description, "description_tags": asset.description_tags or [],
+            "description_model": asset.description_model, "described_at": _iso(asset.described_at),
+            "description_error": asset.description_error,
+            "describe_pending": session.query(Job).filter(
+                Job.kind == "describe_batch", Job.status.in_(("queued", "running")),
+                Job.payload["asset_ids"].contains([asset.id])).count() > 0,
         },
         "files": [{
             "id": f.id, "filename": f.filename, "path": host(f.path), "source": f.source,

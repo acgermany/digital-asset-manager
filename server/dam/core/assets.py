@@ -5,7 +5,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..models import PROTECTED_TIERS, TIERS, Asset, Ingest
+from ..models import PROTECTED_TIERS, TIERS, Asset, Embedding, Ingest
 from . import events
 from .metadata import summarize_mediainfo
 
@@ -28,6 +28,10 @@ def build_search_text(asset: Asset, session: Session) -> str:
         parts.append("folders: " + " ".join(sorted(folders)))
     if asset.tags:
         parts.append("tags: " + ", ".join(asset.tags))
+    if asset.description:
+        parts.append("description: " + asset.description)
+    if asset.description_tags:
+        parts.append("keywords: " + ", ".join(asset.description_tags))
     parts.append(f"type: {asset.kind}")
     parts.append(f"tier: {asset.value_tier}")
     if asset.captured_at:
@@ -72,6 +76,8 @@ def set_tags(session: Session, asset: Asset, tags: list, actor: str = "user") ->
     old = list(asset.tags or [])
     asset.tags = normalize_tags(tags)
     asset.search_text = build_search_text(asset, session)
+    # Searchable text changed: drop the stale embedding so it's re-embedded.
+    session.query(Embedding).filter(Embedding.asset_id == asset.id).delete()
     events.log(session, "tags_changed", actor=actor, asset_id=asset.id, old=old, new=asset.tags)
 
 
@@ -89,4 +95,5 @@ def set_tier(session: Session, asset: Asset, tier: str, actor: str = "user",
     asset.protected = tier in PROTECTED_TIERS
     asset.needs_backup = tier in PROTECTED_TIERS
     asset.search_text = build_search_text(asset, session)
+    session.query(Embedding).filter(Embedding.asset_id == asset.id).delete()
     events.log(session, "tier_changed", actor=actor, asset_id=asset.id, old=old, new=tier)

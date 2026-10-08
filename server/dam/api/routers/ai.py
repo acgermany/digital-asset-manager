@@ -2,12 +2,13 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ... import queue
-from ...core import ai, embed, events, search as search_ops, settings_store
+from ...core import ai, describe, embed, events, search as search_ops, settings_store
 from ...db import get_session
 from ...models import Asset, Job
 from ..deps import mounts
@@ -157,3 +158,87 @@ def search(q: str, mode: str = "auto", kind: Optional[str] = None, tier: Optiona
     if mode == "semantic" and not kw:
         kw = search_ops.keyword(session, q, limit, kind, tier)
     return {"mode": "keyword", "results": _results(session, kw), "notice": notice}
+
+
+# ---------------------------------------------------------------- vision descriptions
+
+def _describe_status(session: Session) -> dict:
+    cfg = settings_store.all_settings(session)
+    probe = ai.probe(cfg["ollama_url"], cfg["describe_model"])
+    job = session.query(Job).filter_by(kind="describe_batch").order_by(Job.id.desc()).first()
+    return {
+        "model": cfg["describe_model"], "reachable": probe["reachable"],
+        "model_installed": probe["installed"], "model_loaded": probe["loaded"],
+        "error": probe["error"] or (None if probe["installed"] else
+                                    f"Model '{cfg['describe_model']}' is not installed. Run: ollama pull {cfg['describe_model']}"),
+        "auto": bool(cfg.get("describe_auto")),
+        "coverage": describe.coverage(session, cfg),
+        "batch": _job_dict(job),
+    }
+
+
+@router.get("/ai/describe/status")
+def describe_status(session: Session = Depends(get_session)):
+    return _describe_status(session)
+
+
+class DescribeBody(BaseModel):
+    redescribe: bool = False
+    limit: Optional[int] = None
+
+
+@router.post("/ai/describe")
+def start_describe(body: DescribeBody, session: Session = Depends(get_session)):
+    active = session.query(Job).filter(Job.kind == "describe_batch", Job.payload["asset_ids"].is_(None),
+                                       Job.status.in_(("queued", "running", "cancelling"))).first()
+    if active:
+        raise HTTPException(400, "A description batch is already running")
+    payload = {"limit": body.limit}
+    if body.redescribe:
+        payload["redescribe_before"] = datetime.now(timezone.utc).isoformat()
+    queue.enqueue(session, "describe_batch", queue="vision", max_attempts=50, payload=payload)
+    events.log(session, "describe_batch_started", actor="user", redescribe=body.redescribe)
+    session.commit()
+    return _describe_status(session)
+
+
+@router.post("/ai/describe/cancel")
+def cancel_describe(session: Session = Depends(get_session)):
+    jobs = session.query(Job).filter(Job.kind == "describe_batch", Job.status.in_(("queued", "running"))).all()
+    if not jobs:
+        raise HTTPException(400, "No description batch is running")
+    for job in jobs:
+        job.status = "cancelled" if job.status == "queued" else "cancelling"
+    # Stop auto-describe from immediately starting another one.
+    settings_store.update(session, {"describe_auto": False})
+    session.commit()
+    return _describe_status(session)
+
+
+@router.post("/assets/{asset_id}/describe")
+def describe_one(asset_id: int, session: Session = Depends(get_session)):
+    asset = session.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(404, "Asset not found")
+    if asset.kind not in ("image", "video"):
+        raise HTTPException(400, "Only images and videos can be described")
+    asset.description_error = None
+    queue.enqueue(session, "describe_batch", queue="vision", priority=50, max_attempts=10,
+                  payload={"asset_ids": [asset_id]})
+    session.commit()
+    return {"status": "queued"}
+
+
+@router.get("/ai/models")
+def installed_models(session: Session = Depends(get_session)):
+    """Models installed in Ollama, with what they can do (for the Configure dropdowns)."""
+    cfg = settings_store.all_settings(session)
+    try:
+        r = httpx.get(f"{cfg['ollama_url']}/api/tags", timeout=5)
+        r.raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        return {"reachable": False, "error": str(e), "models": []}
+    models = [{"name": m.get("name"), "capabilities": m.get("capabilities") or [],
+               "size": m.get("size"), "parameters": (m.get("details") or {}).get("parameter_size")}
+              for m in r.json().get("models", [])]
+    return {"reachable": True, "error": None, "models": sorted(models, key=lambda m: m["name"])}
