@@ -1,54 +1,22 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../api'
-
-const DEFAULT_PATH = import.meta.env.VITE_SCAN_PATH || '/scan'
+import FolderPicker from './FolderPicker'
 
 export default function ScanControl() {
   const [status, setStatus]   = useState(null)
-  const [scanPath, setScanPath] = useState(DEFAULT_PATH)
-  const [workers, setWorkers]  = useState(4)
+  const [scanPath, setScanPath] = useState('')
+  const [workers, setWorkers]  = useState(2)
   const [err, setErr]          = useState(null)
-  const [browser, setBrowser]  = useState(null)   // null = closed
-  const [browseErr, setBrowseErr] = useState(null)
-  const browserRef = useRef(null)
+  const [picking, setPicking]  = useState(false)
+  const [sources, setSources]  = useState([])
 
-  // Close browser on outside click
   useEffect(() => {
-    if (!browser) return
-    function onDown(e) {
-      if (browserRef.current && !browserRef.current.contains(e.target)) {
-        setBrowser(null)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [browser])
-
-  const openBrowser = async () => {
-    setBrowseErr(null)
-    try {
-      const data = await api.browse(scanPath || DEFAULT_PATH)
-      if (data.error) { setBrowseErr(data.error); return }
-      setBrowser(data)
-    } catch (e) {
-      setBrowseErr(e.message)
-    }
-  }
-
-  const browseInto = async (path) => {
-    try {
-      const data = await api.browse(path)
-      if (data.error) { setBrowseErr(data.error); return }
-      setBrowser(data)
-    } catch (e) {
-      setBrowseErr(e.message)
-    }
-  }
-
-  const selectDir = (path) => {
-    setScanPath(path)
-    setBrowser(null)
-  }
+    api.config().then(c => {
+      const list = c.settings.catalog_sources || []
+      setSources(list)
+      setScanPath(p => p || list[0] || '')
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -108,86 +76,39 @@ export default function ScanControl() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-title" style={{ marginBottom: 12 }}>Scan configuration</div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div style={{ position: 'relative' }} ref={browserRef}>
+          <div>
             <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-              Directory path
+              Folder to scan
             </label>
             <div style={{ display: 'flex', gap: 6 }}>
               <input
                 className="search"
-                style={{ width: 300 }}
+                style={{ width: 360 }}
                 value={scanPath}
                 onChange={e => setScanPath(e.target.value)}
                 disabled={status?.running}
-                placeholder="/scan"
+                placeholder="Choose a folder…"
               />
-              <button
-                className="btn sm"
-                onClick={openBrowser}
-                disabled={status?.running}
-                title="Browse directories"
-              >
+              <button className="btn sm" onClick={() => setPicking(true)} disabled={status?.running}>
                 Browse
               </button>
             </div>
-
-            {browseErr && (
-              <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 4 }}>{browseErr}</div>
-            )}
-
-            {browser && (
-              <div className="dir-browser">
-                <div className="dir-browser-path">
-                  {browser.parent && (
-                    <button className="btn sm" style={{ marginRight: 8 }} onClick={() => browseInto(browser.parent)}>
-                      ↑ Up
-                    </button>
-                  )}
-                  <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>
-                    {browser.path}
-                  </span>
-                </div>
-                <div className="dir-browser-list">
-                  <div
-                    className="dir-item dir-item-select"
-                    onClick={() => selectDir(browser.path)}
-                  >
-                    <span style={{ color: 'var(--accent-lt)' }}>✓</span> Use this directory
-                  </div>
-                  {browser.dirs.length === 0 && (
-                    <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
-                      No subdirectories
-                    </div>
-                  )}
-                  {browser.dirs.map(d => (
-                    <div key={d.path} className="dir-item" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button
-                        className="btn sm"
-                        onClick={() => selectDir(d.path)}
-                        title="Use this directory"
-                        style={{ flexShrink: 0 }}
-                      >
-                        ✓
-                      </button>
-                      <span
-                        style={{ flex: 1, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        onClick={() => browseInto(d.path)}
-                        title="Browse into this directory"
-                      >
-                        <span style={{ marginRight: 6, color: 'var(--text-muted)' }}>📁</span>
-                        {d.name}
-                      </span>
-                      <span
-                        style={{ flexShrink: 0, color: 'var(--text-muted)', cursor: 'pointer', padding: '0 4px' }}
-                        onClick={() => browseInto(d.path)}
-                        title="Browse into this directory"
-                      >
-                        →
-                      </span>
-                    </div>
-                  ))}
-                </div>
+            {sources.length > 0 && (
+              <div className="chip-row">
+                {sources.map(src => (
+                  <button key={src} className="chip" disabled={status?.running} onClick={() => setScanPath(src)}>
+                    {src}
+                  </button>
+                ))}
               </div>
+            )}
+            {picking && (
+              <FolderPicker
+                title="Choose a folder to scan"
+                initialPath={scanPath || null}
+                onClose={() => setPicking(false)}
+                onSelect={p => { setScanPath(p); setPicking(false) }}
+              />
             )}
           </div>
           <div>

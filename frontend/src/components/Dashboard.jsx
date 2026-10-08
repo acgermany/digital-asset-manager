@@ -105,6 +105,43 @@ export default function Dashboard({ onGoScan }) {
         />
       </div>
 
+      <div className="section-header" style={{ marginTop: 8 }}>
+        <div>
+          <div className="section-title">Protected content</div>
+          <div className="section-sub">Never deleted automatically · flagged for backup</div>
+        </div>
+      </div>
+      <div className="stat-grid">
+        <StatCard
+          title="Critical (financial)"
+          value={(stats.tiers?.critical || 0).toLocaleString()}
+          sub="tax & financial documents"
+          accent="var(--red)"
+        />
+        <StatCard
+          title="Precious (family)"
+          value={(stats.tiers?.precious || 0).toLocaleString()}
+          sub="photos, videos, recordings"
+          accent="var(--purple)"
+        />
+        <StatCard
+          title="Needs Backup"
+          value={(stats.needs_backup || 0).toLocaleString()}
+          sub="critical + precious assets"
+        />
+        <StatCard
+          title="Open Reviews"
+          value={Object.values(stats.open_reviews || {}).reduce((a, b) => a + b, 0).toLocaleString()}
+          sub="decisions waiting for you"
+          accent={Object.keys(stats.open_reviews || {}).length ? 'var(--yellow)' : undefined}
+        />
+        <StatCard
+          title="Ingested"
+          value={(stats.ingests?.accepted || 0).toLocaleString()}
+          sub={`${(stats.ingests?.duplicate_deleted || 0).toLocaleString()} duplicates removed`}
+        />
+      </div>
+
       {scan?.running && (
         <div className="card" style={{ marginTop: 8 }}>
           <div className="card-title">Scan in progress</div>

@@ -1,13 +1,16 @@
 import { useState } from 'react'
 import Dashboard from './components/Dashboard'
-import Duplicates from './components/Duplicates'
 import Files from './components/Files'
-import ScanControl from './components/ScanControl'
+import Workflows from './components/Workflows'
+import Configure from './components/Configure'
 
-const TABS = ['Dashboard', 'Files', 'Duplicates', 'Scan']
+const TABS = ['Dashboard', 'Files', 'Workflows', 'Configure']
 
 export default function App() {
-  const [tab, setTab] = useState('Dashboard')
+  const [tab, setTab]         = useState('Dashboard')
+  const [workflow, setWorkflow] = useState('Ingest')
+
+  const goWorkflow = (name) => { setWorkflow(name); setTab('Workflows') }
 
   return (
     <div className="layout">
@@ -27,10 +30,10 @@ export default function App() {
       </header>
 
       <main className="main">
-        {tab === 'Dashboard'  && <Dashboard onGoScan={() => setTab('Scan')} />}
-        {tab === 'Files'      && <Files />}
-        {tab === 'Duplicates' && <Duplicates />}
-        {tab === 'Scan'       && <ScanControl />}
+        {tab === 'Dashboard' && <Dashboard onGoScan={() => goWorkflow('Scan')} />}
+        {tab === 'Files'     && <Files />}
+        {tab === 'Workflows' && <Workflows active={workflow} onSelect={setWorkflow} onConfigure={() => setTab('Configure')} />}
+        {tab === 'Configure' && <Configure />}
       </main>
     </div>
   )

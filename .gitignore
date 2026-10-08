@@ -212,3 +212,6 @@ data/*.db-wal
 data/*.db-shm
 frontend/node_modules/
 *.csv
+
+# Network share credentials written by the app
+data/secrets/

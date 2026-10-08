@@ -1,18 +1,62 @@
-version: '3.8'
+# Digital Asset Manager
+#
+# The app only sees host folders that are mounted below. HOST_HOME and HOST_DRIVES
+# default to your home folder and /Volumes (macOS). On the Linux box set them in
+# .env (e.g. HOST_HOME=/srv, HOST_DRIVES=/media). Everything else (hot folder,
+# library, scan sources, network shares, Ollama) is set in the web UI → Configure.
 
 services:
 
-  api:
-    build: ./api
-    container_name: dam-api
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: dam-db
+    environment:
+      POSTGRES_USER: dam
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dam}
+      POSTGRES_DB: dam
+    command: >
+      postgres -c shared_buffers=256MB -c work_mem=16MB -c maintenance_work_mem=128MB
+               -c effective_cache_size=1GB
+    volumes:
+      - dam-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dam -d dam"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 1g
+    restart: unless-stopped
+
+  app:
+    build: ./server
+    container_name: dam-app
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "8000:8000"
-    volumes:
-      - /Volumes:/scan:ro   # all host-mounted drives, auto-updates as drives connect/disconnect
-      - ./data:/data        # SQLite database persistence
+    # SYS_ADMIN lets the app mount SMB/NFS shares added on the Configure page.
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+    security_opt:
+      - apparmor:unconfined
     environment:
-      - DB_PATH=/data/inventory.db
-      - SCAN_PATH=/scan
+      DATABASE_URL: postgresql+psycopg://dam:${DB_PASSWORD:-dam}@db:5432/dam
+      # Label|path in container|path on host  (the UI shows host paths)
+      HOST_ROOTS: "Home|/host/home|${HOST_HOME:-${HOME}};Drives|/host/drives|${HOST_DRIVES:-/Volumes}"
+      DATA_DIR: /data
+      WORKERS: ${WORKERS:-2}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+    volumes:
+      - ${HOST_HOME:-${HOME}}:/host/home
+      # On Linux, add `:rslave` so drives plugged in later show up without a restart.
+      - ${HOST_DRIVES:-/Volumes}:/host/drives
+      - ./data:/data
+    mem_limit: 2g
     restart: unless-stopped
 
   frontend:
@@ -21,5 +65,9 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - api
+      - app
+    mem_limit: 64m
     restart: unless-stopped
+
+volumes:
+  dam-pgdata:

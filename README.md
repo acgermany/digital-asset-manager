@@ -1,295 +1,73 @@
 # Digital Asset Manager
 
-A Docker-based service that scans storage locations, calculates SHA256 checksums, and logs file metadata to a persistent SQLite database. Includes a web UI for browsing inventory, detecting duplicates, and marking files for deletion.
+A self-hosted ingest pipeline and catalog for personal media and documents. Drop files into a
+hot folder; the app checksums them, removes exact duplicates, holds look-alike copies for
+review, extracts metadata, protects family media and financial records, and files everything
+into a library.
 
-## Features
+See [docs/INGEST_POC_PLAN.md](docs/INGEST_POC_PLAN.md) for the full plan and roadmap.
 
-- Recursively scans directories
-- Calculates SHA256 checksums for all files
-- Skips files that already exist in database (by filepath)
-- Records: filepath, filename, filesize, sha256, date_created, date_modified, scan_date
-- Persistent SQLite database
-- No record inserted until checksum is successfully computed
-- **Web UI** for inventory stats, duplicate review, and file management
-
-## Web App
-
-The web app runs two services via docker-compose:
-
-| Service | Port | Description |
-|---------|------|-------------|
-| `api` | 8000 | FastAPI backend — serves all `/api/` endpoints |
-| `frontend` | 3000 | React SPA — nginx-served, proxies `/api/` to the backend |
-
-### Starting the web app
+## Running
 
 ```bash
-docker-compose up --build
+docker compose up --build -d
 ```
 
-Then open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000), go to **Configure**, and choose a hot folder
+and a library folder.
 
-### Views
+| Container | Port | What it runs |
+|---|---|---|
+| `db` | — | Postgres 16 + pgvector |
+| `app` | 8000 | API, hot-folder watcher and job workers (`server/`) |
+| `frontend` | 3000 | React UI (nginx), proxies `/api/` to `app` |
 
-- **Dashboard** — inventory stats (total files, size, duplicate counts) and live scan progress
-- **Duplicates** — paginated duplicate groups with per-file scoring; mark individual files or auto-mark all but the best copy
-- **Scan** — configure scan path and worker count, start a background scan, monitor live progress
+### What the app can see
 
-### API Endpoints
+Containers only see host folders that are mounted into them. `docker-compose.yml` mounts your
+home folder and your drives folder; set these in `.env` (see `.env.example`):
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/stats` | Inventory counts and size metrics |
-| `GET` | `/api/files` | Paginated file list with search/filter |
-| `POST` | `/api/files/{id}/mark` | Toggle deletion mark (`?mark=true\|false`) |
-| `GET` | `/api/duplicates` | Paginated duplicate groups with scoring |
-| `POST` | `/api/duplicates/{sha256}/auto-mark` | Mark all but highest-scored file for deletion |
-| `POST` | `/api/scan/start` | Start background scan (`?scan_path&workers`) |
-| `GET` | `/api/scan/status` | Live scan progress |
+| Variable | macOS default | Linux box example |
+|---|---|---|
+| `HOST_HOME` | `$HOME` | `/srv` |
+| `HOST_DRIVES` | `/Volumes` | `/media` (add `:rslave` to the mount for hot-plugged drives) |
 
-> Files marked for deletion are flagged in the database only — no files are deleted by the app.
+NAS and other network shares (SMB/NFS) are added from **Configure → Network shares**. The `app`
+container has the `SYS_ADMIN` capability so it can mount them.
 
-## Quick Start
+## How ingest works
 
-### 1. Setup Files
+1. A file in the hot folder is picked up once its size stops changing. The first subfolder name
+   is its provenance (`Hotfolder/Grandma/photo.jpg` → `Grandma`). An optional `photo.jpg.json`
+   sidecar is stored as provenance metadata.
+2. It is checksummed (SHA-256) and compared with everything already known:
+   - **Same checksum and same name** (case-insensitive) → deleted from the hot folder (or moved
+     to `_trash/`), as long as the existing copy is still on disk.
+   - **Same checksum, different name** → moved to `_review/` and listed under
+     Workflows → Review.
+   - **New** → metadata (mediainfo JSON, EXIF, document text) is extracted and the file is
+     classified, then moved to `Library/<provenance>/<year>/<month>/`.
+3. Classification tiers: **critical** (tax/financial documents) and **precious** (family photos,
+   videos, recordings) are protected and flagged for backup; uncertain cases go to review.
 
-Create a project directory with these files:
-```bash
-mkdir file-inventory
-cd file-inventory
-```
+The library folder contains a hidden `.dam_library` marker. If it's missing (drive or NAS not
+mounted), files wait in the hot folder.
 
-Save the following files:
-- `inventory_service.py` - Main Python service
-- `Dockerfile` - Docker image definition
-- `docker-compose.yml` - Docker Compose configuration
+## Web app
 
-### 2. Configure
+- **Dashboard**: inventory, duplicate and protected-content totals
+- **Files**: every known file copy, searchable
+- **Workflows**: Ingest (live activity), Review, Duplicates, Scan (catalog existing folders in place)
+- **Configure**: hot folder, library, scan sources, drives, network shares, Ollama
 
-Edit `docker-compose.yml` and update the volume mount:
-```yaml
-volumes:
-  - /path/to/your/files:/scan:ro  # Change this to your directory
-  - ./data:/data                   # Persistent database storage
-```
-
-### 3. Build and Run
-
-```bash
-# Build the Docker image
-docker-compose build
-
-# Run a one-time scan
-docker-compose up file-inventory
-
-# Or run periodic scans (daily)
-docker-compose up -d file-inventory-cron
-```
-
-## Usage Examples
-
-### Basic Scan
-```bash
-docker-compose run --rm file-inventory
-```
-
-### Scan with Statistics
-```bash
-docker-compose run --rm file-inventory --stats
-```
-
-### Custom Paths
-```bash
-docker-compose run --rm file-inventory \
-  --scan-path /scan \
-  --db-path /data/inventory.db \
-  --stats
-```
-
-### Direct Docker Run
-```bash
-docker build -t file-inventory .
-
-docker run --rm \
-  -v /path/to/scan:/scan:ro \
-  -v $(pwd)/data:/data \
-  file-inventory \
-  --scan-path /scan \
-  --stats
-```
-
-## How It Works
-
-1. Service starts and connects to SQLite database at `/data/inventory.db`
-2. Walks through all files in the scan directory
-3. For each file:
-   - Checks if filepath already exists in database → **skips if found**
-   - Gets file size
-   - Calculates SHA256 checksum
-   - Gets file creation and modification dates
-   - **Only after successful checksum**: inserts record into database
-4. Database commits every 100 files for performance
-5. Final commit and summary
-
-## Database Schema
-
-```sql
-CREATE TABLE file_inventory (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    filepath TEXT NOT NULL UNIQUE,
-    filename TEXT NOT NULL,
-    filesize INTEGER NOT NULL,
-    sha256 TEXT NOT NULL,
-    date_created TIMESTAMP,
-    date_modified TIMESTAMP,
-    scan_date TIMESTAMP NOT NULL
-);
-```
-
-**Fields:**
-- `filepath` - Full path to file (UNIQUE - prevents duplicates)
-- `filename` - Just the filename
-- `filesize` - File size in bytes
-- `sha256` - SHA256 checksum hash
-- `date_created` - File creation date (platform dependent)
-- `date_modified` - File last modification date
-- `scan_date` - When this record was created
-
-## Querying the Database
+## Development
 
 ```bash
-# Access the database file
-sqlite3 data/inventory.db
-
-# Example queries:
-.mode column
-.headers on
-
--- View all records
-SELECT * FROM file_inventory LIMIT 10;
-
--- Count total files
-SELECT COUNT(*) as total_files FROM file_inventory;
-
--- Total size
-SELECT SUM(filesize) / 1024.0 / 1024.0 / 1024.0 as total_gb FROM file_inventory;
-
--- Recent scans
-SELECT * FROM file_inventory ORDER BY scan_date DESC LIMIT 10;
-
--- Large files
-SELECT filepath, filesize / 1024.0 / 1024.0 as size_mb 
-FROM file_inventory 
-ORDER BY filesize DESC 
-LIMIT 20;
-
--- Files by extension
-SELECT 
-    SUBSTR(filename, INSTR(filename, '.')) as extension,
-    COUNT(*) as count,
-    SUM(filesize) / 1024.0 / 1024.0 as total_mb
-FROM file_inventory
-WHERE filename LIKE '%.%'
-GROUP BY extension
-ORDER BY count DESC;
+cd server
+uv venv -p python3.12 .venv && uv pip install -p .venv -r requirements-dev.txt
+docker run -d --name dam-test-db -e POSTGRES_USER=dam -e POSTGRES_PASSWORD=dam \
+  -e POSTGRES_DB=dam_test -p 55432:5432 pgvector/pgvector:pg16
+.venv/bin/pytest
 ```
 
-## Command Line Options
-
-- `--scan-path PATH` - Directory to scan (default: /scan)
-- `--db-path PATH` - Database file path (default: /data/inventory.db)
-- `--stats` - Show statistics after scan
-
-## Incremental Scans
-
-The service is designed for incremental scanning:
-
-- **First run**: Scans all files, creates all records
-- **Subsequent runs**: Only processes new files
-- Files already in database (by filepath) are skipped
-- Perfect for running periodically to catch new files
-
-Example workflow:
-```bash
-# Initial scan of 10,000 files
-docker-compose up file-inventory
-# Processes: 10,000 files
-
-# Add 100 new files to directory
-# Run again
-docker-compose up file-inventory
-# Processes: 100 files, skips 10,000
-```
-
-## Performance Notes
-
-- SHA256 calculated using 8KB chunks (memory efficient)
-- Database commits every 100 files
-- Files checked against database before processing
-- Only successful checksums result in database records
-- Large directories: expect ~1-5 files/second depending on file sizes
-
-## Date Field Notes
-
-- `date_modified` - Reliable on all platforms (st_mtime)
-- `date_created` - Platform dependent:
-  - **macOS/Windows**: Actual creation time (st_birthtime)
-  - **Linux**: Falls back to change time (st_ctime), not true creation time
-- Both stored as TIMESTAMP in database
-
-## Persistent Storage
-
-The database is stored in `./data/inventory.db` which is mounted as a Docker volume:
-
-```yaml
-volumes:
-  - ./data:/data  # Database persists here
-```
-
-This means:
-- Database survives container restarts
-- Can be backed up by copying `./data/inventory.db`
-- Can be queried directly from host machine
-- Multiple scans accumulate data in same database
-
-## Logging
-
-All output goes to stdout:
-- `INFO` - Files being processed, progress updates, summary
-- `ERROR` - Files that couldn't be processed
-- `DEBUG` - Skipped files (requires debug logging level)
-
-## Troubleshooting
-
-**No files processed:**
-- Check volume mount: `docker-compose run --rm file-inventory ls -la /scan`
-- Verify scan path is correct
-
-**All files skipped:**
-- Files already exist in database
-- Delete database to rescan: `rm data/inventory.db`
-
-**Permission errors:**
-- Ensure Docker can read files
-- Mount as read-only is fine: `/path:/scan:ro`
-
-**Database locked:**
-- Stop all containers accessing the database
-- Only one write process at a time
-
-## Security
-
-- Mount scan directories as read-only (`:ro`)
-- No network access required
-- Database stored locally
-- No external dependencies
-
-## Backup
-
-```bash
-# Backup database
-cp data/inventory.db data/inventory.db.backup
-
-# Or use SQLite backup
-sqlite3 data/inventory.db ".backup data/inventory.db.backup"
-```
+Frontend: `cd frontend && npm ci && npm run dev` (proxies `/api` to `localhost:8000`).
