@@ -6,10 +6,10 @@ import time
 
 from . import queue
 from .config import settings as env
-from .core import catalog, settings_store
+from .core import catalog, media, settings_store
 from .core.ingest import Deferred, IngestError, process
 from .db import SessionLocal
-from .models import Ingest, Job
+from .models import File, Ingest, Job
 
 log = logging.getLogger("dam.worker")
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
@@ -45,7 +45,18 @@ def run_catalog_scan(session, job: Job) -> None:
     catalog.scan(session, job.payload["path"], int(job.payload.get("workers", 2)), report)
 
 
-HANDLERS = {"ingest": run_ingest, "catalog_scan": run_catalog_scan}
+def run_proxy(session, job: Job) -> None:
+    f = session.get(File, job.payload.get("file_id"))
+    if f is None or not os.path.isfile(f.path):
+        raise IngestError("Video file is not available")
+
+    def report(fraction: float) -> bool:
+        return queue.heartbeat(session, job, {"fraction": round(fraction, 3)})
+
+    media.make_proxy(f.path, f.sha256 or str(f.id), report)
+
+
+HANDLERS = {"ingest": run_ingest, "catalog_scan": run_catalog_scan, "proxy": run_proxy}
 
 
 def main() -> None:

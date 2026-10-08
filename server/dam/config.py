@@ -39,6 +39,8 @@ class Settings:
     embed_batch_size: int = int(os.environ.get("EMBED_BATCH_SIZE", "32"))
     # Send (redacted) document text of critical/financial assets to the model
     embed_sensitive_text: bool = _bool("EMBED_SENSITIVE_TEXT", False)
+    # Semantic hits below this cosine similarity are treated as noise
+    semantic_min_score: float = float(os.environ.get("SEMANTIC_MIN_SCORE", "0.5"))
     model_load_timeout: float = float(os.environ.get("MODEL_LOAD_TIMEOUT", "300"))
 
     # Web UI auth. Empty password disables auth (local development only).

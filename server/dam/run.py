@@ -29,6 +29,7 @@ def wait_for_db() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # status polls every few seconds
     wait_for_db()
 
     from .core.mounts import mount_all
@@ -40,6 +41,7 @@ def main() -> None:
     commands = {
         "api": [sys.executable, "-m", "uvicorn", "dam.api.app:app", "--host", "0.0.0.0", "--port", "8000"],
         "watcher": [sys.executable, "-m", "dam.watcher"],
+        "ai-worker": [sys.executable, "-m", "dam.ai_worker"],
         **{f"worker-{i}": [sys.executable, "-m", "dam.worker"] for i in range(workers)},
     }
     procs = {name: subprocess.Popen(cmd) for name, cmd in commands.items()}

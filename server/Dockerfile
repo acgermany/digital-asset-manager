@@ -2,9 +2,10 @@ FROM python:3.12-slim
 
 # ffmpeg: audio transcode for preview; mediainfo: media metadata JSON;
 # exiftool: EXIF/QuickTime capture metadata; poppler-utils: pdftotext for documents;
-# cifs-utils / nfs-common: network shares mounted from the Configure page
+# cifs-utils / nfs-common: network shares mounted from the Configure page;
+# libheif-examples: heif-convert for viewing iPhone HEIC photos
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg mediainfo libimage-exiftool-perl poppler-utils cifs-utils nfs-common \
+        ffmpeg mediainfo libimage-exiftool-perl poppler-utils cifs-utils nfs-common libheif-examples \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

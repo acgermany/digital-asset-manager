@@ -2,8 +2,9 @@ import Ingest from './Ingest'
 import Review from './Review'
 import Duplicates from './Duplicates'
 import ScanControl from './ScanControl'
+import Embeddings from './Embeddings'
 
-const WORKFLOWS = ['Ingest', 'Review', 'Duplicates', 'Scan']
+const WORKFLOWS = ['Ingest', 'Review', 'Duplicates', 'Scan', 'Embeddings']
 
 export default function Workflows({ active, onSelect, onConfigure }) {
   return (
@@ -24,6 +25,7 @@ export default function Workflows({ active, onSelect, onConfigure }) {
       {active === 'Review'     && <Review />}
       {active === 'Duplicates' && <Duplicates />}
       {active === 'Scan'       && <ScanControl />}
+      {active === 'Embeddings' && <Embeddings onConfigure={onConfigure} />}
     </>
   )
 }

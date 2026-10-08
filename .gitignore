@@ -215,3 +215,5 @@ frontend/node_modules/
 
 # Network share credentials written by the app
 data/secrets/
+# Generated thumbnails, display images and video proxies
+data/cache/

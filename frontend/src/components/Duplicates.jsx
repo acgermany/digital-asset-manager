@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
-import FilePreview from './FilePreview'
+import Viewer from './Viewer'
 
 const PAGE = 25
 
@@ -141,7 +141,7 @@ export default function Duplicates() {
         </div>
       )}
 
-      <FilePreview file={preview} onClose={() => setPreview(null)} />
+      {preview && <Viewer files={[preview]} index={0} onIndex={() => {}} onClose={() => setPreview(null)} />}
     </>
   )
 }

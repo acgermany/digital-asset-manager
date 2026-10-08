@@ -55,6 +55,16 @@ export const api = {
   reviews:        (params = {})        => req('/reviews?' + new URLSearchParams(params)),
   resolveReview:  (id, resolution, tier) => jreq(`/reviews/${id}/resolve`, 'POST', { resolution, tier }),
   jobsSummary:    ()                   => req('/jobs/summary'),
+  // AI / search
+  aiStatus:       ()                   => req('/ai/status'),
+  enableSemantic: ()                   => req('/ai/semantic/enable', { method: 'POST' }),
+  disableSemantic:()                   => req('/ai/semantic/disable', { method: 'POST' }),
+  startEmbed:     (reembed = false)    => jreq('/ai/embed', 'POST', { reembed }),
+  cancelEmbed:    ()                   => req('/ai/embed/cancel', { method: 'POST' }),
+  search:         (params)             => req('/search?' + new URLSearchParams(params)),
+  // Viewer
+  viewInfo:       (fileId)             => req(`/files/${fileId}/viewinfo`),
+  retryProxy:     (fileId)             => req(`/files/${fileId}/proxy/retry`, { method: 'POST' }),
 }
 
 export function fmtBytes(bytes) {

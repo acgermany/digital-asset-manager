@@ -1,106 +1,163 @@
-import { useState, useEffect, useCallback } from 'react'
-import { api } from '../api'
-import FilePreview from './FilePreview'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { api, fmtBytes } from '../api'
+import { useAIStatus } from '../hooks'
+import SemanticToggle from './SemanticToggle'
+import Viewer from './Viewer'
 
-const PAGE = 50
+const PAGE = 60
+const KINDS = [['', 'All'], ['image', 'Images'], ['video', 'Videos'], ['audio', 'Audio'], ['document', 'Documents']]
+const ICON = { image: '🖼', video: '🎬', audio: '🎵', document: '📄', other: '📦' }
+const THUMB_KINDS = new Set(['image', 'video'])
 
-function fmt(bytes) {
-  if (!bytes) return '0 B'
-  if (bytes >= 1e9)  return (bytes / 1e9).toFixed(2)  + ' GB'
-  if (bytes >= 1e6)  return (bytes / 1e6).toFixed(2)  + ' MB'
-  if (bytes >= 1e3)  return (bytes / 1e3).toFixed(1)  + ' KB'
-  return bytes + ' B'
+function readPref(key, fallback) {
+  try { return localStorage.getItem(key) || fallback } catch { return fallback }
+}
+function writePref(key, value) {
+  try { localStorage.setItem(key, value) } catch { /* storage unavailable */ }
+}
+
+function Thumb({ f }) {
+  const [failed, setFailed] = useState(false)
+  const canThumb = (THUMB_KINDS.has(f.kind) || f.filename.toLowerCase().endsWith('.pdf')) && !failed
+  return (
+    <div className="thumb">
+      {canThumb
+        ? <img src={`/api/files/${f.id}/thumbnail`} alt="" loading="lazy" onError={() => setFailed(true)} />
+        : <span className="thumb-icon">{ICON[f.kind] || ICON.other}</span>}
+      {f.kind === 'video' && <span className="thumb-play">▶</span>}
+      {['critical', 'precious'].includes(f.value_tier) && <span className={`tag tier-${f.value_tier} thumb-tier`}>{f.value_tier}</span>}
+    </div>
+  )
 }
 
 export default function Files() {
   const [data, setData]       = useState(null)
   const [page, setPage]       = useState(0)
-  const [search, setSearch]   = useState('')
+  const [query, setQuery]     = useState('')
+  const [q, setQ]             = useState('')         // debounced
+  const [kind, setKind]       = useState('')
   const [filter, setFilter]   = useState('all')
+  const [view, setView]       = useState(() => readPref('dam.files.view', 'grid'))
   const [err, setErr]         = useState(null)
   const [busy, setBusy]       = useState(false)
-  const [preview, setPreview] = useState(null)
+  const [viewing, setViewing] = useState(null)       // index into rows
+  const ai = useAIStatus()
+  const semanticReady = ai.status?.semantic_enabled && ai.status?.state === 'ready'
+  const reqId = useRef(0)
+
+  useEffect(() => {
+    const t = setTimeout(() => setQ(query.trim()), 300)
+    return () => clearTimeout(t)
+  }, [query])
 
   const load = useCallback(async (p) => {
+    const id = ++reqId.current
     setBusy(true)
     try {
-      const params = {
-        limit: PAGE,
-        offset: p * PAGE,
-        ...(search && { search }),
-        ...(filter === 'duplicates' && { duplicates_only: true }),
-        ...(filter === 'marked'     && { marked_only: true }),
+      let d
+      if (q) {
+        d = await api.search({ q, mode: 'auto', limit: 100, ...(kind && { kind }) })
+        d = { files: d.results, total: d.results.length, mode: d.mode, notice: d.notice }
+      } else {
+        d = await api.files({
+          limit: PAGE, offset: p * PAGE,
+          ...(kind && { kind }),
+          ...(filter === 'duplicates' && { duplicates_only: true }),
+          ...(filter === 'marked' && { marked_only: true }),
+        })
       }
-      const d = await api.files(params)
-      setData(d)
-      setErr(null)
+      if (id === reqId.current) { setData(d); setErr(null) }
     } catch (e) {
-      setErr(e.message)
+      if (id === reqId.current) setErr(e.message)
     } finally {
-      setBusy(false)
+      if (id === reqId.current) setBusy(false)
     }
-  }, [search, filter])
+  // Re-run searches when semantic search becomes ready so results upgrade from keyword
+  }, [q, kind, filter, semanticReady])
 
-  // Reset to page 0 when search/filter changes
-  useEffect(() => {
-    setPage(0)
-    load(0)
-  }, [search, filter])
+  useEffect(() => { setPage(0); load(0) }, [load])
+  useEffect(() => { if (page !== 0) load(page) }, [page])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load when page changes (but not on filter/search — handled above)
-  useEffect(() => {
-    if (page !== 0) load(page)
-  }, [page])
-
-  const handleToggleMark = async (id, mark) => {
-    await api.markFile(id, mark)
-    load(page)
+  const toggleMark = async (id, mark) => {
+    try { await api.markFile(id, mark); load(page) } catch (e) { setErr(e.message) }
   }
 
-  const pages = data ? Math.ceil(data.total / PAGE) : 0
+  const changeView = v => { setView(v); writePref('dam.files.view', v) }
+
+  const rows = data?.files || []
+  const pages = data && !q ? Math.ceil(data.total / PAGE) : 0
+  const searching = !!q
 
   return (
     <>
       <div className="section-header">
         <div>
-          <div className="section-title">File Inventory</div>
+          <div className="section-title">Files</div>
           <div className="section-sub">
-            {data ? `${data.total.toLocaleString()} files` : ''}
+            {data && (searching
+              ? `${rows.length} result${rows.length === 1 ? '' : 's'} · ${data.mode === 'hybrid' ? 'semantic + keyword' : data.mode}`
+              : `${data.total.toLocaleString()} files`)}
           </div>
         </div>
-        {busy && <div className="spinner" />}
+        <SemanticToggle status={ai.status} onChange={ai.setStatus} />
       </div>
 
+      {ai.status?.semantic_enabled && ai.status.state === 'loading' && (
+        <div className="info-box"><span className="spinner sm" /> Loading the embedding model on your Mac — keyword results are shown until it’s ready.</div>
+      )}
+      {searching && data?.notice && !(ai.status?.state === 'loading') && <div className="info-box">{data.notice}</div>}
       {err && <div className="error-box">{err}</div>}
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="files-toolbar">
         <input
           className="search"
-          style={{ width: 320 }}
-          placeholder="Search by path…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
+          style={{ width: 340 }}
+          placeholder={semanticReady ? 'Describe what you’re looking for…' : 'Search names, folders, metadata…'}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
         />
-        <div className="filter-bar">
-          {['all', 'duplicates', 'marked'].map(f => (
-            <button
-              key={f}
-              className={`btn sm${filter === f ? ' primary' : ''}`}
-              onClick={() => setFilter(f)}
-            >
-              {f === 'all' ? 'All' : f === 'duplicates' ? 'Duplicates' : 'Marked'}
-            </button>
+        <div className="chip-row" style={{ marginTop: 0 }}>
+          {KINDS.map(([value, label]) => (
+            <button key={label} className={`chip${kind === value ? ' active' : ''}`} onClick={() => setKind(value)}>{label}</button>
           ))}
+        </div>
+        {!searching && (
+          <div className="chip-row" style={{ marginTop: 0 }}>
+            {[['all', 'Any'], ['duplicates', 'Duplicates'], ['marked', 'Marked']].map(([value, label]) => (
+              <button key={value} className={`chip${filter === value ? ' active' : ''}`} onClick={() => setFilter(value)}>{label}</button>
+            ))}
+          </div>
+        )}
+        <span style={{ flex: 1 }} />
+        {busy && <div className="spinner sm" />}
+        <div className="view-toggle">
+          <button className={`btn sm${view === 'grid' ? ' primary' : ''}`} onClick={() => changeView('grid')}>Grid</button>
+          <button className={`btn sm${view === 'list' ? ' primary' : ''}`} onClick={() => changeView('list')}>List</button>
         </div>
       </div>
 
-      {data?.files.length === 0 && (
-        <div className="card" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
-          No files found. Run a scan first.
+      {data && rows.length === 0 && (
+        <div className="card cfg-empty" style={{ textAlign: 'center', padding: 40 }}>
+          {searching ? 'Nothing matched.' : 'No files yet. Drop files in the hot folder or run a scan.'}
         </div>
       )}
 
-      {data?.files.length > 0 && (
+      {view === 'grid' && rows.length > 0 && (
+        <div className="grid">
+          {rows.map((f, i) => (
+            <button key={f.id} className={`grid-card${f.marked_for_deletion ? ' marked' : ''}`} onClick={() => setViewing(i)} title={f.filepath}>
+              <Thumb f={f} />
+              <div className="grid-name">{f.filename}</div>
+              <div className="grid-sub">
+                {fmtBytes(f.filesize)}
+                {f.score != null && ` · ${Math.round(f.score * 100)}% match`}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {view === 'list' && rows.length > 0 && (
         <div className="files-table-wrap">
           <table className="files-table">
             <thead>
@@ -108,38 +165,26 @@ export default function Files() {
                 <th>Filename</th>
                 <th>Path</th>
                 <th style={{ textAlign: 'right' }}>Size</th>
-                <th>Scanned</th>
-                <th>Status</th>
+                <th>{searching ? 'Match' : 'Added'}</th>
+                <th>Tier</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {data.files.map(f => (
+              {rows.map((f, i) => (
                 <tr key={f.id} className={f.marked_for_deletion ? 'row-marked' : ''}>
-                  <td className="cell-name">{f.filename}</td>
+                  <td className="cell-name">{ICON[f.kind] || ICON.other} {f.filename}</td>
                   <td className="cell-path">{f.filepath}</td>
-                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(f.filesize)}</td>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtBytes(f.filesize)}</td>
                   <td style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)', fontSize: 12 }}>
-                    {new Date(f.scan_date).toLocaleDateString()}
+                    {searching
+                      ? (f.score != null ? `${Math.round(f.score * 100)}%` : 'keyword')
+                      : f.scan_date && new Date(f.scan_date).toLocaleDateString()}
                   </td>
-                  <td>
-                    {f.marked_for_deletion
-                      ? <span className="badge delete">marked</span>
-                      : <span className="badge" style={{ color: 'var(--text-muted)', background: 'var(--surface2)' }}>ok</span>
-                    }
-                  </td>
+                  <td>{f.value_tier && <span className={`tag tier-${f.value_tier}`}>{f.value_tier}</span>}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    <button
-                      className="btn sm"
-                      style={{ marginRight: 6 }}
-                      onClick={() => setPreview(f)}
-                    >
-                      Preview
-                    </button>
-                    <button
-                      className={`btn sm${f.marked_for_deletion ? '' : ' danger'}`}
-                      onClick={() => handleToggleMark(f.id, !f.marked_for_deletion)}
-                    >
+                    <button className="btn sm" style={{ marginRight: 6 }} onClick={() => setViewing(i)}>View</button>
+                    <button className={`btn sm${f.marked_for_deletion ? '' : ' danger'}`} onClick={() => toggleMark(f.id, !f.marked_for_deletion)}>
                       {f.marked_for_deletion ? 'Unmark' : 'Mark'}
                     </button>
                   </td>
@@ -154,14 +199,15 @@ export default function Files() {
         <div className="pagination">
           <button className="btn sm" disabled={page === 0} onClick={() => setPage(0)}>«</button>
           <button className="btn sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹</button>
-          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            {page + 1} / {pages}
-          </span>
+          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{page + 1} / {pages}</span>
           <button className="btn sm" disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)}>›</button>
           <button className="btn sm" disabled={page >= pages - 1} onClick={() => setPage(pages - 1)}>»</button>
         </div>
       )}
-      <FilePreview file={preview} onClose={() => setPreview(null)} />
+
+      {viewing !== null && rows[viewing] && (
+        <Viewer files={rows} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />
+      )}
     </>
   )
 }

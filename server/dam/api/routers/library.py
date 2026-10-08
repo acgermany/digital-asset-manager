@@ -13,9 +13,10 @@ from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from ...core import events, locations, scoring
+from ... import queue
+from ...core import events, locations, media, scoring
 from ...db import get_session
-from ...models import Asset, File, Segment
+from ...models import Asset, File, Job, Segment
 from ..deps import mounts
 
 router = APIRouter()
@@ -40,7 +41,7 @@ DUP_ASSETS = "SELECT asset_id FROM files WHERE asset_id IS NOT NULL GROUP BY ass
 @router.get("/files")
 def list_files(limit: int = 100, offset: int = 0, search: Optional[str] = None,
                duplicates_only: bool = False, marked_only: bool = False,
-               tier: Optional[str] = None, source: Optional[str] = None,
+               tier: Optional[str] = None, source: Optional[str] = None, kind: Optional[str] = None,
                session: Session = Depends(get_session)):
     q = session.query(File, Asset).outerjoin(Asset, Asset.id == File.asset_id)
     if search:
@@ -54,6 +55,8 @@ def list_files(limit: int = 100, offset: int = 0, search: Optional[str] = None,
         q = q.filter(Asset.value_tier == tier)
     if source:
         q = q.filter(File.source == source)
+    if kind:
+        q = q.filter(Asset.kind == kind)
     total = q.count()
     rows = q.order_by(File.scanned_at.desc(), File.id.desc()).limit(limit).offset(offset).all()
     ms = mounts(session)
@@ -220,3 +223,98 @@ def delete_segment(segment_id: int, session: Session = Depends(get_session)):
         session.delete(s)
         session.commit()
     return {"success": True}
+
+
+# ---------------------------------------------------------------- viewer
+
+VIDEO_MIME = {'.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/mp4', '.webm': 'video/webm'}
+
+
+def _get_file(session: Session, file_id: int) -> File:
+    f = session.get(File, file_id)
+    if not f:
+        raise HTTPException(404, "File not found")
+    if not os.path.isfile(f.path):
+        raise HTTPException(404, "File not found on disk (is the drive or share mounted?)")
+    return f
+
+
+def _proxy_job(session: Session, asset_id: int) -> Optional[Job]:
+    return session.query(Job).filter(Job.kind == "proxy", Job.asset_id == asset_id) \
+        .order_by(Job.id.desc()).first()
+
+
+@router.get("/files/{file_id}/thumbnail")
+def thumbnail(file_id: int, session: Session = Depends(get_session)):
+    f = _get_file(session, file_id)
+    out = media.thumbnail(f.path, f.sha256 or str(f.id), media.view_type(f.filename))
+    if not out:
+        raise HTTPException(404, "No thumbnail for this file")
+    return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+
+
+@router.get("/files/{file_id}/viewinfo")
+def view_info(file_id: int, session: Session = Depends(get_session)):
+    """How the browser should show this file. Starts a video proxy if one is needed."""
+    f = _get_file(session, file_id)
+    vtype = media.view_type(f.filename)
+    sha = f.sha256 or str(f.id)
+    info = {"file_id": f.id, "type": vtype, "filename": f.filename,
+            "filepath": locations.to_host(f.path, mounts(session)), "filesize": f.filesize,
+            "url": f"/api/files/{f.id}/view", "download_url": f"/api/files/{f.id}/content",
+            "proxy": None}
+    if vtype == "video":
+        probe = media.probe(f.path)
+        info.update(duration=probe.get("duration"), width=probe.get("width"), height=probe.get("height"),
+                    video_codec=probe.get("video_codec"), audio_codec=probe.get("audio_codec"))
+        if not media.browser_playable(f.path, probe):
+            if media.has_proxy(sha):
+                info["proxy"] = {"status": "ready", "progress": 1.0}
+            else:
+                job = _proxy_job(session, f.asset_id) if f.asset_id else None
+                if job is None or job.status in ("failed", "cancelled", "done"):
+                    if job is not None and job.status == "failed" and job.error:
+                        info["proxy"] = {"status": "failed", "error": job.error}
+                        return info
+                    job = queue.enqueue(session, "proxy", queue="heavy", asset_id=f.asset_id,
+                                        priority=20, max_attempts=2, payload={"file_id": f.id})
+                    session.commit()
+                info["proxy"] = {"status": "queued" if job.status == "queued" else "processing",
+                                 "progress": (job.progress or {}).get("fraction", 0.0)}
+    elif vtype == "audio":
+        info["url"] = f"/api/files/{f.id}/content"  # transcoded to MP3 there
+    return info
+
+
+@router.post("/files/{file_id}/proxy/retry")
+def retry_proxy(file_id: int, session: Session = Depends(get_session)):
+    f = _get_file(session, file_id)
+    queue.enqueue(session, "proxy", queue="heavy", asset_id=f.asset_id, priority=20, max_attempts=2,
+                  payload={"file_id": f.id})
+    session.commit()
+    return {"status": "queued"}
+
+
+@router.get("/files/{file_id}/view")
+def view(file_id: int, session: Session = Depends(get_session)):
+    f = _get_file(session, file_id)
+    vtype = media.view_type(f.filename)
+    sha = f.sha256 or str(f.id)
+    ext = os.path.splitext(f.path)[1].lower()
+    if vtype == "image":
+        out = media.display_image(f.path, sha)
+        if not out:
+            raise HTTPException(415, "This image format could not be converted for viewing")
+        mime = mimetypes.guess_type(out)[0] or "image/jpeg"
+        return FileResponse(out, media_type=mime)
+    if vtype == "video":
+        if media.has_proxy(sha):
+            return FileResponse(media.proxy_path(sha), media_type="video/mp4")
+        return FileResponse(f.path, media_type=VIDEO_MIME.get(ext, "video/mp4"))
+    if vtype == "pdf":
+        return FileResponse(f.path, media_type="application/pdf",
+                            headers={"Content-Disposition": "inline"})
+    if vtype == "text":
+        return FileResponse(f.path, media_type="text/plain; charset=utf-8",
+                            headers={"Content-Disposition": "inline"})
+    return file_content(file_id, session)
