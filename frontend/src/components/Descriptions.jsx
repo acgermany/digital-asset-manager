@@ -16,8 +16,8 @@ const SPEC = {
   startLabel: 'Describe',
   redoLabel: 'Re-describe all',
   redoHelp: 'Redo every description (after changing the model or prompts)',
-  progress: bp => `${bp.described} described`,
-  help: 'Precious items go first. Roughly 5–15 seconds per photo and 20–40 seconds per video once the model is loaded. New descriptions are re-embedded so search and the map pick them up.',
+  progress: bp => `${bp.described || 0} described${bp.unreadable ? ` · ${bp.unreadable} unreadable` : ''}`,
+  help: 'Precious items go first. Roughly 5–15 seconds per photo and 20–40 seconds per video once the model is loaded; the vision queue’s “max running” sets how many the Mac handles at once (Configure → Processing). New descriptions are re-embedded so search and the map pick them up.',
 }
 
 export default function Descriptions({ onConfigure }) {

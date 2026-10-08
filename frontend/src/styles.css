@@ -1165,3 +1165,25 @@ input.search.tag-input { width: 110px; padding: 3px 8px; font-size: 12px; }
 .transcript-line { display: grid; grid-template-columns: 44px 1fr; gap: 6px; padding: 2px 0; font-size: 12px; line-height: 1.5; }
 .transcript-time { background: none; border: none; padding: 0; color: var(--accent-lt); font-family: monospace; font-size: 11px; cursor: pointer; text-align: left; }
 .transcript-time:hover { text-decoration: underline; }
+
+/* ── Queues & workers ───────────────────────────────── */
+
+.queue-table td.num, .queue-table th.num { text-align: right; white-space: nowrap; }
+.queue-table td .btn + .btn { margin-left: 6px; }
+.queue-wait { font-size: 11px; color: var(--yellow); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.at-cap { color: var(--yellow); font-weight: 600; }
+.worker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.worker-card { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.worker-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.worker-name { font-weight: 600; display: flex; gap: 6px; align-items: center; }
+.worker-stats { display: flex; gap: 14px; font-size: 12px; color: var(--text-muted); }
+.worker-stats strong { color: var(--text); }
+.worker-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; font-size: 12px; }
+.worker-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.stepper { display: inline-flex; align-items: center; gap: 8px; }
+.stepper strong { min-width: 18px; text-align: center; }
+.batch-row { margin-bottom: 10px; padding: 12px 14px; }
+.batch-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.batch-head .cell-name { flex: 1; }
+.copy-line { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.copy-line code { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; overflow-x: auto; white-space: nowrap; }

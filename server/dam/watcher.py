@@ -34,6 +34,10 @@ def scan_once(session, hotfolder: str, seen: dict, stable_seconds: float) -> int
             except OSError:
                 continue
             present.add(path)
+            if st.st_size == 0:
+                # Finder and SMB clients create empty placeholders before copying data in.
+                # An empty file has nothing to keep, so never treat one as content.
+                continue
             sig = (st.st_size, st.st_mtime)
             prev = seen.get(path)
             if prev is None or prev[:2] != sig:

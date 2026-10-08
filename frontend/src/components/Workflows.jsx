@@ -5,8 +5,9 @@ import ScanControl from './ScanControl'
 import Embeddings from './Embeddings'
 import Descriptions from './Descriptions'
 import Transcripts from './Transcripts'
+import Queues from './Queues'
 
-const WORKFLOWS = ['Ingest', 'Review', 'Duplicates', 'Scan', 'AI']
+const WORKFLOWS = ['Ingest', 'Review', 'Duplicates', 'Scan', 'AI', 'Queues']
 
 export default function Workflows({ active, onSelect, onConfigure }) {
   return (
@@ -27,6 +28,7 @@ export default function Workflows({ active, onSelect, onConfigure }) {
       {active === 'Review'     && <Review />}
       {active === 'Duplicates' && <Duplicates />}
       {active === 'Scan'       && <ScanControl />}
+      {active === 'Queues' && <Queues />}
       {active === 'AI' && <>
         <Descriptions onConfigure={onConfigure} />
         <div style={{ height: 12 }} />

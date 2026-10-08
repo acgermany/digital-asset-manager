@@ -177,8 +177,11 @@ def process(session: Session, ingest: Ingest, cfg: dict) -> None:
     ingest.status, ingest.step, ingest.error = "processing", "hash", None
     session.commit()
 
-    sha = sha256_file(path)
     size = os.path.getsize(path)
+    if size == 0:
+        raise IngestError("Empty file (0 bytes) — nothing to ingest. If a copy is still running, "
+                          "it will be picked up again once data arrives.")
+    sha = sha256_file(path)
     ingest.sha256, ingest.filesize = sha, size
     ingest.step = "dedupe"
 

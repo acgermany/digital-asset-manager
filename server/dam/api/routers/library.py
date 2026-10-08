@@ -244,7 +244,7 @@ def _get_file(session: Session, file_id: int) -> File:
 
 
 def _proxy_job(session: Session, asset_id: int) -> Optional[Job]:
-    return session.query(Job).filter(Job.kind == "proxy", Job.asset_id == asset_id) \
+    return session.query(Job).filter(Job.kind == "render", Job.asset_id == asset_id) \
         .order_by(Job.id.desc()).first()
 
 
@@ -280,11 +280,13 @@ def view_info(file_id: int, session: Session = Depends(get_session)):
                     if job is not None and job.status == "failed" and job.error:
                         info["proxy"] = {"status": "failed", "error": job.error}
                         return info
-                    job = queue.enqueue(session, "proxy", queue="heavy", asset_id=f.asset_id,
-                                        priority=20, max_attempts=2, payload={"file_id": f.id})
+                    # Someone is waiting to watch this: jump the queue.
+                    job = queue.enqueue(session, "render", queue="render", asset_id=f.asset_id, priority=100)
                     session.commit()
+                    job = job or _proxy_job(session, f.asset_id)
                 info["proxy"] = {"status": "queued" if job.status == "queued" else "processing",
-                                 "progress": (job.progress or {}).get("fraction", 0.0)}
+                                 "progress": (job.progress or {}).get("fraction", 0.0),
+                                 "waiting_reason": job.waiting_reason}
     elif vtype == "audio":
         info["url"] = f"/api/files/{f.id}/content"  # transcoded to MP3 there
     return info
@@ -293,8 +295,7 @@ def view_info(file_id: int, session: Session = Depends(get_session)):
 @router.post("/files/{file_id}/proxy/retry")
 def retry_proxy(file_id: int, session: Session = Depends(get_session)):
     f = _get_file(session, file_id)
-    queue.enqueue(session, "proxy", queue="heavy", asset_id=f.asset_id, priority=20, max_attempts=2,
-                  payload={"file_id": f.id})
+    queue.enqueue(session, "render", queue="render", asset_id=f.asset_id, priority=100)
     session.commit()
     return {"status": "queued"}
 

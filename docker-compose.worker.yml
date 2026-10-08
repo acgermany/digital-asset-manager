@@ -1,0 +1,43 @@
+# Run DAM workers on another machine (e.g. a spare PC or the Mac) to add processing power.
+#
+#   1. On the Linux box, let workers reach Postgres: in its .env set
+#        DB_PUBLISH=0.0.0.0:5432
+#        DB_PASSWORD=<something real>
+#      then `docker compose up -d db`. Keep 5432 to the LAN only.
+#   2. On this machine, mount the SAME storage at the SAME paths the app uses:
+#        HOST_HOME / HOST_DRIVES  -> the folders the app sees as /host/home and /host/drives
+#        DATA_DIR                 -> the app's ./data folder (shared over the network), which holds
+#                                    rendered previews (cache/) and share credentials (secrets/)
+#   3. Copy this file and the server/ folder over, create a .env with the values below, then:
+#        docker compose -f docker-compose.worker.yml up -d --scale worker=2
+#
+# The worker shows up in the app under Workflows → Queues, where its queues and
+# concurrency can be changed live.
+
+x-dam-env: &dam-env
+  DATABASE_URL: postgresql+psycopg://dam:${DB_PASSWORD:?set DB_PASSWORD}@${DB_HOST:?set DB_HOST to the Linux box}:5432/dam
+  HOST_ROOTS: "Home|/host/home|${APP_HOST_HOME:?set APP_HOST_HOME to the app's HOST_HOME};Drives|/host/drives|${APP_HOST_DRIVES:-/media}"
+  DATA_DIR: /data
+  OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+  TRANSCRIBE_URL: ${TRANSCRIBE_URL:-http://host.docker.internal:8178}
+
+services:
+  worker:
+    build: ./server
+    image: dam-server:latest
+    command: ["python", "-m", "dam.worker"]
+    environment:
+      <<: *dam-env
+      WORKER_QUEUES: ${WORKER_QUEUES:-render}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+    volumes:
+      - ${HOST_HOME:?set HOST_HOME}:/host/home
+      - ${HOST_DRIVES:-/media}:/host/drives
+      - ${DATA_DIR:?set DATA_DIR to the shared app data folder}:/data
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+    security_opt:
+      - apparmor:unconfined
+    stop_grace_period: 40s
+    restart: unless-stopped

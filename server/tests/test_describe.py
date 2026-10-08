@@ -66,8 +66,7 @@ def test_batch_describes_images_skips_critical_and_drops_stale_embedding(session
 
     cfg = settings_store.all_settings(session, fresh=True)
     assert describe.pending_ids(session, cfg) == [photo.id]          # critical excluded by default
-    progress = describe.run_batch(session, cfg, lambda p: True)
-    assert progress["described"] == 1 and calls[0][1] == 1
+    assert describe.describe_asset(session, cfg, photo) and calls[0][1] == 1
     session.refresh(photo)
     assert photo.description.startswith("A red square") and photo.description_tags == ["red", "square"]
     assert "description: A red square" in photo.search_text

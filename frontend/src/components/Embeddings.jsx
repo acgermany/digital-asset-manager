@@ -74,7 +74,7 @@ export default function Embeddings({ onConfigure }) {
         <div className="card cfg-section">
           <div className="cfg-section-head">
             <div>
-              <div className="cfg-section-title">{batch.reembed ? 'Re-embed' : 'Batch'} #{batch.id}</div>
+              <div className="cfg-section-title">{batch.label || 'Batch'} #{batch.id}</div>
               <div className="cfg-section-sub">
                 {BATCH_LABEL[batch.status] || batch.status}
                 {batch.created_at && ` · started ${new Date(batch.created_at).toLocaleString()}`}
@@ -84,7 +84,7 @@ export default function Embeddings({ onConfigure }) {
           {bp.total > 0 && (
             <>
               <div className="progress-track"><div className="progress-fill" style={{ width: `${Math.round(bp.done / bp.total * 100)}%` }} /></div>
-              <div className="cfg-muted">{bp.done} / {bp.total} processed · {bp.embedded} embedded (unchanged items are skipped)</div>
+              <div className="cfg-muted">{bp.done} / {bp.total} processed{bp.running ? ` · ${bp.running} running` : ''}{bp.failed ? ` · ${bp.failed} failed` : ''} (unchanged items are skipped)</div>
             </>
           )}
           {batch.waiting_reason && running && <div className="cfg-help">⏸ {batch.waiting_reason}</div>}

@@ -49,14 +49,14 @@ def _asset_detail(session: Session, asset: Asset) -> dict:
             "description_model": asset.description_model, "described_at": _iso(asset.described_at),
             "description_error": asset.description_error,
             "describe_pending": session.query(Job).filter(
-                Job.kind == "describe_batch", Job.status.in_(("queued", "running")),
-                Job.payload["asset_ids"].contains([asset.id])).count() > 0,
+                Job.kind == "describe", Job.asset_id == asset.id,
+                Job.status.in_(("queued", "running"))).count() > 0,
             "transcript": asset.transcript, "transcript_segments": asset.transcript_segments or [],
             "transcript_language": asset.transcript_language, "transcript_model": asset.transcript_model,
             "transcribed_at": _iso(asset.transcribed_at), "transcript_error": asset.transcript_error,
             "transcribe_pending": session.query(Job).filter(
-                Job.kind == "transcribe_batch", Job.status.in_(("queued", "running")),
-                Job.payload["asset_ids"].contains([asset.id])).count() > 0,
+                Job.kind == "transcribe", Job.asset_id == asset.id,
+                Job.status.in_(("queued", "running"))).count() > 0,
         },
         "files": [{
             "id": f.id, "filename": f.filename, "path": host(f.path), "source": f.source,

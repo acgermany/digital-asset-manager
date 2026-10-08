@@ -38,25 +38,34 @@ def main() -> None:
     from .db import SessionLocal
     with SessionLocal() as session:
         mount_all(session)
-        # Every worker lives in this container, so anything still "running" was
-        # interrupted by the restart: resume it now rather than after the stale timeout.
+        # The previous app container's embedded worker died with it: hand its jobs back now
+        # instead of waiting for the stall timeout. Jobs held by other workers are untouched.
         resumed = session.execute(text("""
             UPDATE jobs SET status = CASE WHEN status = 'cancelling' THEN 'cancelled' ELSE 'queued' END,
                             locked_by = NULL
-            WHERE status IN ('running', 'cancelling')""")).rowcount
+            WHERE status IN ('running', 'cancelling')
+              AND (locked_by IS NULL
+                   OR locked_by IN (SELECT id FROM workers WHERE embedded)
+                   OR locked_by NOT IN (SELECT id FROM workers))""")).rowcount
+        session.execute(text("UPDATE workers SET status = 'stopped', running = 0 WHERE embedded AND status <> 'stopped'"))
         session.commit()
         if resumed:
             log.info("resumed %d interrupted job(s)", resumed)
 
-    workers = int(os.environ.get("WORKERS", "2"))
+    # The app container always runs the API, the hot-folder watcher and the coordinator,
+    # plus an embedded worker so a single-container install processes jobs on its own.
+    # Scale out with more worker containers (docker compose up --scale worker=N).
+    embedded = int(os.environ.get("EMBEDDED_WORKER_CONCURRENCY", os.environ.get("WORKERS", "2")))
     commands = {
         "api": [sys.executable, "-m", "uvicorn", "dam.api.app:app", "--host", "0.0.0.0", "--port", "8000"],
         "watcher": [sys.executable, "-m", "dam.watcher"],
-        "ai-worker": [sys.executable, "-m", "dam.ai_worker"],
-        "vision-worker": [sys.executable, "-m", "dam.ai_worker", "--vision"],
-        "speech-worker": [sys.executable, "-m", "dam.ai_worker", "--speech"],
-        **{f"worker-{i}": [sys.executable, "-m", "dam.worker"] for i in range(workers)},
+        "coordinator": [sys.executable, "-m", "dam.coordinator"],
     }
+    if embedded > 0:
+        commands["worker"] = [sys.executable, "-m", "dam.worker", "--embedded", "--name", "app",
+                              "--concurrency", str(embedded),
+                              "--queues", os.environ.get("EMBEDDED_WORKER_QUEUES",
+                                                         "ingest,scan,render,embed,vision,speech")]
     procs = {name: subprocess.Popen(cmd) for name, cmd in commands.items()}
     stopping = False
 

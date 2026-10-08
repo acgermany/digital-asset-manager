@@ -19,7 +19,8 @@ and a library folder.
 | Container | Port | What it runs |
 |---|---|---|
 | `db` | — | Postgres 16 + pgvector |
-| `app` | 8000 | API, hot-folder watcher and job workers (`server/`) |
+| `app` | 8000 | API, hot-folder watcher, coordinator, and an embedded worker (`server/`) |
+| `worker` | — | Extra queue consumers; none by default (`docker compose up -d --scale worker=N`) |
 | `frontend` | 3000 | React UI (nginx), proxies `/api/` to `app` |
 
 ### What the app can see
@@ -81,6 +82,18 @@ whisper-server -m ~/whisper-models/ggml-large-v3-turbo-q5_0.bin --host 127.0.0.1
 ```
 
 Everything (models, prompts, URLs, which file types) is configurable in **Configure → AI**.
+
+## Scaling
+
+Every unit of work (a file to ingest, a preview to render, a photo to describe) is its own job in
+a Postgres-backed queue. Any number of workers pull from it, here or on other machines. Pace is
+controlled per queue (pause, cluster-wide "max running") in **Configure → Processing** and per
+worker (jobs at once, which queues, drain) in **Workflows → Queues**. See
+[docs/SCALING.md](docs/SCALING.md).
+
+```bash
+docker compose up -d --scale worker=3
+```
 
 ## Development
 

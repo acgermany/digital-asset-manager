@@ -10,7 +10,7 @@ from typing import Optional
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text,
-    UniqueConstraint, func,
+    UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -146,8 +146,10 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    kind: Mapped[str] = mapped_column(String(32))  # ingest|catalog_scan|embed_batch
-    queue: Mapped[str] = mapped_column(String(16), default="default")  # default|heavy|ai
+    # ingest|catalog_scan|render|embed|describe|transcribe
+    kind: Mapped[str] = mapped_column(String(32))
+    queue: Mapped[str] = mapped_column(String(16), default="ingest")
+    batch_id: Mapped[Optional[int]] = mapped_column(ForeignKey("batches.id", ondelete="SET NULL"))
     # queued|running|done|failed|cancelling|cancelled
     status: Mapped[str] = mapped_column(String(16), default="queued")
     priority: Mapped[int] = mapped_column(Integer, default=0)
@@ -165,7 +167,13 @@ class Job(Base):
     created_at: Mapped[datetime] = _now()
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (Index("idx_jobs_claim", "status", "queue", "run_after"),)
+    __table_args__ = (
+        Index("idx_jobs_claim", "status", "queue", "priority", "id"),
+        Index("idx_jobs_batch", "batch_id", "status"),
+        # At most one live job of a kind per asset: batches and auto-enqueue can't double up.
+        Index("ux_jobs_live_asset", "kind", "asset_id", unique=True,
+              postgresql_where=text("asset_id IS NOT NULL AND status IN ('queued','running','cancelling')")),
+    )
 
 
 class Review(Base):
@@ -278,3 +286,54 @@ class NetworkMount(Base):
     auto_mount: Mapped[bool] = mapped_column(Boolean, default=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = _now()
+
+
+class Batch(Base):
+    """A user- or auto-started run over many items; its work is the child jobs."""
+    __tablename__ = "batches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32))   # describe|transcribe|embed|render
+    label: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running|done|cancelled
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str] = mapped_column(String(16), default="user")
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = _now()
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class QueueConfig(Base):
+    """Per-queue controls, editable in Configure → Processing."""
+    __tablename__ = "queues"
+
+    name: Mapped[str] = mapped_column(String(16), primary_key=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    max_running: Mapped[Optional[int]] = mapped_column(Integer)      # cluster-wide cap; NULL = unlimited
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    stall_seconds: Mapped[int] = mapped_column(Integer, default=120)  # no heartbeat this long -> reclaim
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Worker(Base):
+    """A running consumer. Registered on start; heartbeats every few seconds."""
+    __tablename__ = "workers"
+
+    id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    name: Mapped[str] = mapped_column(String(96))
+    hostname: Mapped[str] = mapped_column(String(255))
+    version: Mapped[Optional[str]] = mapped_column(String(32))
+    queues: Mapped[list] = mapped_column(JSONB, default=list)         # what it is consuming now
+    concurrency: Mapped[int] = mapped_column(Integer, default=1)
+    desired_queues: Mapped[Optional[list]] = mapped_column(JSONB)     # override set in the app
+    desired_concurrency: Mapped[Optional[int]] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running|draining|stopped
+    running: Mapped[int] = mapped_column(Integer, default=0)
+    processed: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    embedded: Mapped[bool] = mapped_column(Boolean, default=False)    # the one inside the app container
+    started_at: Mapped[datetime] = _now()
+    last_seen: Mapped[datetime] = _now()

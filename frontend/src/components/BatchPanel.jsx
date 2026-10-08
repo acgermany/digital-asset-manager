@@ -77,12 +77,12 @@ export default function BatchPanel({ spec, onConfigure }) {
 
       {b && (
         <div className="card cfg-section">
-          <div className="cfg-section-title">Batch #{b.id} · {BATCH_LABEL[b.status] || b.status}</div>
+          <div className="cfg-section-title">{b.label || 'Batch'} #{b.id} · {BATCH_LABEL[b.status] || b.status}</div>
           {bp.total > 0 && (
             <>
               <div className="progress-track"><div className="progress-fill" style={{ width: `${Math.round(bp.done / bp.total * 100)}%` }} /></div>
               <div className="cfg-muted">
-                {bp.done} / {bp.total} · {spec.progress(bp)}{bp.failed ? ` · ${bp.failed} unreadable` : ''}
+                {bp.done} / {bp.total} · {spec.progress(bp)}{bp.running ? ` · ${bp.running} running` : ''}{bp.failed ? ` · ${bp.failed} failed` : ''}
                 {bp.current && running && ` · now: ${bp.current}`}
               </div>
             </>

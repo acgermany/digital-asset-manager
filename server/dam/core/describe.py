@@ -10,7 +10,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Optional
 
 import httpx
 from sqlalchemy import text
@@ -22,7 +22,7 @@ from .assets import build_search_text
 
 log = logging.getLogger(__name__)
 
-TIER_ORDER = "CASE value_tier WHEN 'precious' THEN 0 WHEN 'critical' THEN 1 " \
+TIER_ORDER = "CASE a.value_tier WHEN 'precious' THEN 0 WHEN 'critical' THEN 1 " \
              "WHEN 'standard' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
 TAGS_RE = re.compile(r"^\s*(?:\*\*)?tags(?:\*\*)?\s*:\s*(.+)$", re.I | re.M)
 
@@ -39,22 +39,27 @@ class DescribeError(Exception):
 
 def _eligible_sql(cfg: dict) -> tuple:
     kinds = [k for k in (cfg.get("describe_kinds") or []) if k in ("image", "video")] or ["none"]
-    clause = "kind = ANY(:kinds)"
+    clause = "a.kind = ANY(:kinds)"
     if not cfg.get("describe_critical"):
-        clause += " AND value_tier <> 'critical'"
+        clause += " AND a.value_tier <> 'critical'"
     return clause, {"kinds": kinds}
+
+
+def pending_where(cfg: dict, redescribe_before: Optional[str] = None) -> tuple:
+    """SQL condition (alias `a`) for assets that still need a description."""
+    clause, params = _eligible_sql(cfg)
+    if redescribe_before:
+        clause += " AND (a.described_at IS NULL OR a.described_at < CAST(:before AS timestamptz))"
+        params["before"] = redescribe_before
+    else:
+        clause += " AND a.described_at IS NULL AND a.description_error IS NULL"
+    return clause, params
 
 
 def pending_ids(session: Session, cfg: dict, limit: Optional[int] = None,
                 redescribe_before: Optional[str] = None) -> list:
-    """Undescribed assets, or with redescribe_before (ISO time) everything not redone since then."""
-    clause, params = _eligible_sql(cfg)
-    if redescribe_before:
-        clause += " AND (described_at IS NULL OR described_at < CAST(:before AS timestamptz))"
-        params["before"] = redescribe_before
-    else:
-        clause += " AND described_at IS NULL AND description_error IS NULL"
-    sql = f"SELECT id FROM assets WHERE {clause} ORDER BY {TIER_ORDER}, id"
+    clause, params = pending_where(cfg, redescribe_before)
+    sql = f"SELECT a.id FROM assets a WHERE {clause} ORDER BY {TIER_ORDER}, a.id"
     if limit:
         sql += " LIMIT :limit"
         params["limit"] = limit
@@ -65,9 +70,9 @@ def coverage(session: Session, cfg: dict) -> dict:
     clause, params = _eligible_sql(cfg)
     row = session.execute(text(f"""
         SELECT COUNT(*),
-               COUNT(*) FILTER (WHERE described_at IS NOT NULL),
-               COUNT(*) FILTER (WHERE description_error IS NOT NULL AND described_at IS NULL)
-        FROM assets WHERE {clause}"""), params).one()
+               COUNT(*) FILTER (WHERE a.described_at IS NOT NULL),
+               COUNT(*) FILTER (WHERE a.description_error IS NOT NULL AND a.described_at IS NULL)
+        FROM assets a WHERE {clause}"""), params).one()
     eligible, done, failed = row
     return {"model": cfg["describe_model"], "eligible": eligible, "described": done,
             "failed": failed, "pending": max(0, eligible - done - failed)}
@@ -233,34 +238,3 @@ def describe_asset(session: Session, cfg: dict, asset: Asset) -> bool:
                model=cfg["describe_model"], frames=len(images))
     session.commit()
     return True
-
-
-def run_batch(session: Session, cfg: dict, report: Callable[[dict], bool],
-              asset_ids: Optional[list] = None, redescribe_before: Optional[str] = None,
-              limit: Optional[int] = None) -> dict:
-    """Describe pending (or given) assets one by one. Resumable: each asset commits,
-    and a resumed batch only picks up what is still pending."""
-    if asset_ids:
-        ids = list(asset_ids)
-    else:
-        ids = pending_ids(session, cfg, limit=limit, redescribe_before=redescribe_before)
-    progress = {"total": len(ids), "done": 0, "described": 0, "failed": 0,
-                "model": cfg["describe_model"], "current": None}
-    if not report(progress):
-        return progress
-    for asset_id in ids:
-        asset = session.get(Asset, asset_id)
-        if asset is None:
-            progress["done"] += 1
-            continue
-        progress["current"] = asset.files[0].filename if asset.files else None
-        if not report(progress):
-            break
-        if describe_asset(session, cfg, asset):
-            progress["described"] += 1
-        else:
-            progress["failed"] += 1
-        progress["done"] += 1
-    progress["current"] = None
-    report(progress)
-    return progress

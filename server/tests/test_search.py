@@ -45,10 +45,9 @@ def test_batch_embeds_valuable_first_and_is_idempotent(session, library):
     order = embed.pending_ids(session, "test-model")
     tiers = [session.get(__import__("dam.models", fromlist=["Asset"]).Asset, i).value_tier for i in order]
     assert tiers[0] == "critical"
-    seen = []
-    progress = embed.run_batch(session, cfg, lambda p: seen.append(dict(p)) or True)
-    assert progress["embedded"] == 2 and embed.coverage(session, "test-model")["pending"] == 0
-    assert embed.run_batch(session, cfg, lambda p: True, reembed=True)["embedded"] == 0  # text unchanged
+    assert embed.embed_assets(session, cfg, order) == 2
+    assert embed.coverage(session, "test-model")["pending"] == 0
+    assert embed.embed_assets(session, cfg, order) == 0  # text unchanged: skipped
 
 
 def test_financial_terms_not_embedded_by_default(session, library):
@@ -62,7 +61,8 @@ def test_search_keyword_and_semantic(session, library):
     from dam.core import settings_store
     settings_store.update(session, {"embed_model": "test-model"})
     session.commit()
-    embed.run_batch(session, settings_store.all_settings(session, fresh=True), lambda p: True)
+    cfg = settings_store.all_settings(session, fresh=True)
+    embed.embed_assets(session, cfg, embed.pending_ids(session, cfg["embed_model"]))
 
     r = client.get("/api/search", params={"q": "beach", "mode": "keyword"}).json()
     assert r["mode"] == "keyword" and r["results"][0]["filename"] == "beach day.jpg"

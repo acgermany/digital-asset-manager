@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ... import queue
 from ...core import ai, describe, embed, events, search as search_ops, settings_store, transcribe
 from ...db import get_session
-from ...models import Asset, Job
+from ...models import Asset, Batch
 from ..deps import mounts
 from .library import _file_row
 
@@ -24,22 +24,34 @@ def _status(session: Session) -> dict:
     age = (datetime.now(timezone.utc) - state.last_checked).total_seconds() if state.last_checked else None
     if age is None or age > STALE_SECONDS:
         state = ai.refresh(session, cfg)
-    job = session.query(Job).filter_by(kind="embed_batch").order_by(Job.id.desc()).first()
     return {
         **ai.as_dict(state, cfg),
         "coverage": embed.coverage(session, cfg["embed_model"]),
-        "batch": _job_dict(job),
+        "batch": _latest_batch(session, "embed"),
     }
 
 
-def _job_dict(job: Optional[Job]) -> Optional[dict]:
-    if job is None:
-        return None
-    return {"id": job.id, "status": job.status, "progress": job.progress or {},
-            "waiting_reason": job.waiting_reason, "error": job.error,
-            "reembed": bool((job.payload or {}).get("reembed")),
-            "created_at": job.created_at.isoformat() if job.created_at else None,
-            "finished_at": job.finished_at.isoformat() if job.finished_at else None}
+def _latest_batch(session: Session, kind: str) -> Optional[dict]:
+    batch = session.query(Batch).filter_by(kind=kind).order_by(Batch.id.desc()).first()
+    return queue.batch_progress(session, batch)
+
+
+def _start_batch(session: Session, kind: str, queue_name: str, where: str, params: dict, label: str,
+                 payload: Optional[dict] = None) -> None:
+    running = session.query(Batch).filter_by(kind=kind, status="running").first()
+    if running:
+        raise HTTPException(400, f"A {kind} batch is already running")
+    batch = queue.create_batch(session, kind, queue_name, where, params, label, payload=payload)
+    events.log(session, f"{kind}_batch_started", actor="user", batch_id=batch.id, total=batch.total)
+    session.commit()
+
+
+def _cancel_batches(session: Session, kind: str) -> None:
+    batches = session.query(Batch).filter_by(kind=kind, status="running").all()
+    if not batches:
+        raise HTTPException(400, "Nothing is running")
+    for b in batches:
+        queue.cancel_batch(session, b)
 
 
 @router.get("/ai/status")
@@ -86,24 +98,18 @@ class BatchBody(BaseModel):
 
 @router.post("/ai/embed")
 def start_batch(body: BatchBody, session: Session = Depends(get_session)):
-    active = session.query(Job).filter(Job.kind == "embed_batch",
-                                       Job.status.in_(("queued", "running", "cancelling"))).first()
-    if active:
-        raise HTTPException(400, "An embedding batch is already running")
-    queue.enqueue(session, "embed_batch", queue="ai", max_attempts=50,
-                  payload={"reembed": body.reembed, "limit": body.limit})
-    events.log(session, "embed_batch_started", actor="user", reembed=body.reembed)
-    session.commit()
+    cfg = settings_store.all_settings(session)
+    if body.reembed:
+        where, params, label = "TRUE", {}, "Re-embed all"     # unchanged text is skipped per item
+    else:
+        (where, params), label = embed.pending_where(cfg["embed_model"]), "Embed pending"
+    _start_batch(session, "embed", "embed", where, params, label, payload={"reembed": body.reembed})
     return _status(session)
 
 
 @router.post("/ai/embed/cancel")
 def cancel_batch(session: Session = Depends(get_session)):
-    job = session.query(Job).filter(Job.kind == "embed_batch",
-                                    Job.status.in_(("queued", "running"))).first()
-    if not job:
-        raise HTTPException(400, "No embedding batch is running")
-    job.status = "cancelled" if job.status == "queued" else "cancelling"
+    _cancel_batches(session, "embed")
     session.commit()
     return _status(session)
 
@@ -165,7 +171,6 @@ def search(q: str, mode: str = "auto", kind: Optional[str] = None, tier: Optiona
 def _describe_status(session: Session) -> dict:
     cfg = settings_store.all_settings(session)
     probe = ai.probe(cfg["ollama_url"], cfg["describe_model"])
-    job = session.query(Job).filter_by(kind="describe_batch").order_by(Job.id.desc()).first()
     return {
         "model": cfg["describe_model"], "reachable": probe["reachable"],
         "model_installed": probe["installed"], "model_loaded": probe["loaded"],
@@ -173,7 +178,7 @@ def _describe_status(session: Session) -> dict:
                                     f"Model '{cfg['describe_model']}' is not installed. Run: ollama pull {cfg['describe_model']}"),
         "auto": bool(cfg.get("describe_auto")),
         "coverage": describe.coverage(session, cfg),
-        "batch": _job_dict(job),
+        "batch": _latest_batch(session, "describe"),
     }
 
 
@@ -189,28 +194,18 @@ class DescribeBody(BaseModel):
 
 @router.post("/ai/describe")
 def start_describe(body: DescribeBody, session: Session = Depends(get_session)):
-    active = session.query(Job).filter(Job.kind == "describe_batch", Job.payload["asset_ids"].is_(None),
-                                       Job.status.in_(("queued", "running", "cancelling"))).first()
-    if active:
-        raise HTTPException(400, "A description batch is already running")
-    payload = {"limit": body.limit}
-    if body.redescribe:
-        payload["redescribe_before"] = datetime.now(timezone.utc).isoformat()
-    queue.enqueue(session, "describe_batch", queue="vision", max_attempts=50, payload=payload)
-    events.log(session, "describe_batch_started", actor="user", redescribe=body.redescribe)
-    session.commit()
+    cfg = settings_store.all_settings(session)
+    before = datetime.now(timezone.utc).isoformat() if body.redescribe else None
+    where, params = describe.pending_where(cfg, before)
+    _start_batch(session, "describe", "vision", where, params,
+                 "Re-describe all" if body.redescribe else "Describe pending")
     return _describe_status(session)
 
 
 @router.post("/ai/describe/cancel")
 def cancel_describe(session: Session = Depends(get_session)):
-    jobs = session.query(Job).filter(Job.kind == "describe_batch", Job.status.in_(("queued", "running"))).all()
-    if not jobs:
-        raise HTTPException(400, "No description batch is running")
-    for job in jobs:
-        job.status = "cancelled" if job.status == "queued" else "cancelling"
-    # Stop auto-describe from immediately starting another one.
-    settings_store.update(session, {"describe_auto": False})
+    _cancel_batches(session, "describe")
+    settings_store.update(session, {"describe_auto": False})  # don't immediately refill
     session.commit()
     return _describe_status(session)
 
@@ -223,8 +218,7 @@ def describe_one(asset_id: int, session: Session = Depends(get_session)):
     if asset.kind not in ("image", "video"):
         raise HTTPException(400, "Only images and videos can be described")
     asset.description_error = None
-    queue.enqueue(session, "describe_batch", queue="vision", priority=50, max_attempts=10,
-                  payload={"asset_ids": [asset_id]})
+    queue.enqueue(session, "describe", queue="vision", priority=100, asset_id=asset_id)
     session.commit()
     return {"status": "queued"}
 
@@ -249,10 +243,9 @@ def installed_models(session: Session = Depends(get_session)):
 def _transcribe_status(session: Session) -> dict:
     cfg = settings_store.all_settings(session)
     server = transcribe.server_status(cfg)
-    job = session.query(Job).filter_by(kind="transcribe_batch").order_by(Job.id.desc()).first()
     return {"url": cfg["transcribe_url"], "api": cfg["transcribe_api"], "reachable": server["reachable"],
             "error": server["error"], "auto": bool(cfg.get("transcribe_auto")),
-            "coverage": transcribe.coverage(session, cfg), "batch": _job_dict(job)}
+            "coverage": transcribe.coverage(session, cfg), "batch": _latest_batch(session, "transcribe")}
 
 
 @router.get("/ai/transcribe/status")
@@ -267,26 +260,17 @@ class TranscribeBody(BaseModel):
 
 @router.post("/ai/transcribe")
 def start_transcribe(body: TranscribeBody, session: Session = Depends(get_session)):
-    active = session.query(Job).filter(Job.kind == "transcribe_batch", Job.payload["asset_ids"].is_(None),
-                                       Job.status.in_(("queued", "running", "cancelling"))).first()
-    if active:
-        raise HTTPException(400, "A transcription batch is already running")
-    payload = {"limit": body.limit}
-    if body.retranscribe:
-        payload["retranscribe_before"] = datetime.now(timezone.utc).isoformat()
-    queue.enqueue(session, "transcribe_batch", queue="speech", max_attempts=50, payload=payload)
-    events.log(session, "transcribe_batch_started", actor="user", retranscribe=body.retranscribe)
-    session.commit()
+    cfg = settings_store.all_settings(session)
+    before = datetime.now(timezone.utc).isoformat() if body.retranscribe else None
+    where, params = transcribe.pending_where(cfg, before)
+    _start_batch(session, "transcribe", "speech", where, params,
+                 "Re-transcribe all" if body.retranscribe else "Transcribe pending")
     return _transcribe_status(session)
 
 
 @router.post("/ai/transcribe/cancel")
 def cancel_transcribe(session: Session = Depends(get_session)):
-    jobs = session.query(Job).filter(Job.kind == "transcribe_batch", Job.status.in_(("queued", "running"))).all()
-    if not jobs:
-        raise HTTPException(400, "No transcription batch is running")
-    for job in jobs:
-        job.status = "cancelled" if job.status == "queued" else "cancelling"
+    _cancel_batches(session, "transcribe")
     settings_store.update(session, {"transcribe_auto": False})
     session.commit()
     return _transcribe_status(session)
@@ -300,8 +284,7 @@ def transcribe_one(asset_id: int, session: Session = Depends(get_session)):
     if asset.kind not in ("video", "audio"):
         raise HTTPException(400, "Only videos and audio can be transcribed")
     asset.transcript_error = None
-    queue.enqueue(session, "transcribe_batch", queue="speech", priority=50, max_attempts=10,
-                  payload={"asset_ids": [asset_id]})
+    queue.enqueue(session, "transcribe", queue="speech", priority=100, asset_id=asset_id)
     session.commit()
     return {"status": "queued"}
 

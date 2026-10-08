@@ -74,6 +74,17 @@ export const api = {
   cancelTranscribe: ()                    => req('/ai/transcribe/cancel', { method: 'POST' }),
   transcribeAsset:  (assetId)             => req(`/assets/${assetId}/transcribe`, { method: 'POST' }),
   testTranscribe:   ()                    => req('/ai/transcribe/test', { method: 'POST' }),
+  // Processing: queues, workers, batches
+  queues:         ()                   => req('/queues'),
+  updateQueue:    (name, changes)      => jreq(`/queues/${name}`, 'PATCH', changes),
+  retryFailed:    (name)               => req(`/queues/${name}/retry-failed`, { method: 'POST' }),
+  clearQueue:     (name)               => req(`/queues/${name}/clear`, { method: 'POST' }),
+  workers:        (all = false)        => req('/workers' + (all ? '?include_stopped=true' : '')),
+  updateWorker:   (id, changes)        => jreq(`/workers/${encodeURIComponent(id)}`, 'PATCH', changes),
+  forgetWorker:   (id)                 => req(`/workers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  batches:        ()                   => req('/batches'),
+  cancelBatch:    (id)                 => req(`/batches/${id}/cancel`, { method: 'POST' }),
+  startRender:    (kinds)              => jreq('/render', 'POST', { kinds }),
   // Assets / library
   fileDetails:    (fileId)             => req(`/files/${fileId}/details`),
   updateAsset:    (assetId, changes)   => jreq(`/assets/${assetId}`, 'PATCH', changes),

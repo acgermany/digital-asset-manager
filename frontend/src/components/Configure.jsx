@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { api, fmtBytes } from '../api'
 import FolderPicker from './FolderPicker'
 import AISettings from './AISettings'
+import ProcessingSettings from './ProcessingSettings'
 
 function Status({ ok, warn, children }) {
   return <span className={`status-chip ${ok ? 'ok' : warn ? 'warn' : 'bad'}`}>{children}</span>
@@ -285,6 +286,10 @@ export default function Configure() {
             {m.last_error && !m.mounted && <div className="share-err">{m.last_error}</div>}
           </div>
         ))}
+      </Section>
+
+      <Section title="Processing" sub="Queues, limits and workers. Add workers to go faster; cap queues to protect the Mac.">
+        <ProcessingSettings notify={msg => { setNotice(msg); setTimeout(() => setNotice(null), 2500) }} onError={setErr} />
       </Section>
 
       <Section title="AI (Ollama on your Mac)" sub="Optional — ingest, duplicates and keyword search work without it.">

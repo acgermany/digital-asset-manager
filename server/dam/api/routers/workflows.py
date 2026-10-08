@@ -62,7 +62,7 @@ def start_scan(scan_path: Optional[str] = None, workers: int = 2, session: Sessi
     path = locations.to_container(scan_path, ms)
     if not path or not os.path.isdir(path):
         raise HTTPException(400, "That folder is not visible to the app")
-    job = queue.enqueue(session, "catalog_scan", queue="heavy", max_attempts=1,
+    job = queue.enqueue(session, "catalog_scan", queue="scan", max_attempts=1,
                         payload={"path": path, "workers": max(1, min(workers, 8))})
     events.log(session, "catalog_scan_started", actor="user", path=path)
     session.commit()
@@ -118,7 +118,7 @@ def retry_ingest(ingest_id: int, session: Session = Depends(get_session)):
     if not os.path.isfile(i.current_path or i.original_path):
         raise HTTPException(400, "The file is no longer in the hot folder")
     i.status, i.error = "queued", None
-    queue.enqueue(session, "ingest", ingest_id=i.id, priority=10)
+    queue.enqueue(session, "ingest", queue="ingest", ingest_id=i.id, priority=10)
     session.commit()
     return _ingest_row(i, mounts(session))
 

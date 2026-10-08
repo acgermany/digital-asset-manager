@@ -10,7 +10,7 @@ import re
 import subprocess
 import tempfile
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Optional
 
 import httpx
 from sqlalchemy import text
@@ -22,7 +22,7 @@ from .assets import build_search_text
 
 log = logging.getLogger(__name__)
 
-TIER_ORDER = "CASE value_tier WHEN 'precious' THEN 0 WHEN 'critical' THEN 1 " \
+TIER_ORDER = "CASE a.value_tier WHEN 'precious' THEN 0 WHEN 'critical' THEN 1 " \
              "WHEN 'standard' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
 
 # Whisper invents these on silence or music; a transcript that is only these is "no speech".
@@ -45,21 +45,27 @@ class TranscribeError(Exception):
 
 def _eligible_sql(cfg: dict) -> tuple:
     kinds = [k for k in (cfg.get("transcribe_kinds") or []) if k in ("video", "audio")] or ["none"]
-    clause = "kind = ANY(:kinds)"
+    clause = "a.kind = ANY(:kinds)"
     if not cfg.get("transcribe_critical"):
-        clause += " AND value_tier <> 'critical'"
+        clause += " AND a.value_tier <> 'critical'"
     return clause, {"kinds": kinds}
+
+
+def pending_where(cfg: dict, retranscribe_before: Optional[str] = None) -> tuple:
+    """SQL condition (alias `a`) for assets that still need a transcript."""
+    clause, params = _eligible_sql(cfg)
+    if retranscribe_before:
+        clause += " AND (a.transcribed_at IS NULL OR a.transcribed_at < CAST(:before AS timestamptz))"
+        params["before"] = retranscribe_before
+    else:
+        clause += " AND a.transcribed_at IS NULL AND a.transcript_error IS NULL"
+    return clause, params
 
 
 def pending_ids(session: Session, cfg: dict, limit: Optional[int] = None,
                 retranscribe_before: Optional[str] = None) -> list:
-    clause, params = _eligible_sql(cfg)
-    if retranscribe_before:
-        clause += " AND (transcribed_at IS NULL OR transcribed_at < CAST(:before AS timestamptz))"
-        params["before"] = retranscribe_before
-    else:
-        clause += " AND transcribed_at IS NULL AND transcript_error IS NULL"
-    sql = f"SELECT id FROM assets WHERE {clause} ORDER BY {TIER_ORDER}, id"
+    clause, params = pending_where(cfg, retranscribe_before)
+    sql = f"SELECT a.id FROM assets a WHERE {clause} ORDER BY {TIER_ORDER}, a.id"
     if limit:
         sql += " LIMIT :limit"
         params["limit"] = limit
@@ -70,10 +76,10 @@ def coverage(session: Session, cfg: dict) -> dict:
     clause, params = _eligible_sql(cfg)
     row = session.execute(text(f"""
         SELECT COUNT(*),
-               COUNT(*) FILTER (WHERE transcribed_at IS NOT NULL),
-               COUNT(*) FILTER (WHERE transcribed_at IS NOT NULL AND coalesce(transcript, '') = ''),
-               COUNT(*) FILTER (WHERE transcript_error IS NOT NULL AND transcribed_at IS NULL)
-        FROM assets WHERE {clause}"""), params).one()
+               COUNT(*) FILTER (WHERE a.transcribed_at IS NOT NULL),
+               COUNT(*) FILTER (WHERE a.transcribed_at IS NOT NULL AND coalesce(a.transcript, '') = ''),
+               COUNT(*) FILTER (WHERE a.transcript_error IS NOT NULL AND a.transcribed_at IS NULL)
+        FROM assets a WHERE {clause}"""), params).one()
     eligible, done, silent, failed = row
     return {"eligible": eligible, "transcribed": done, "no_speech": silent, "failed": failed,
             "pending": max(0, eligible - done - failed)}
@@ -218,25 +224,3 @@ def transcribe_asset(session: Session, cfg: dict, asset: Asset) -> str:
                outcome=outcome, language=result["language"], chars=len(asset.transcript or ""))
     session.commit()
     return outcome
-
-
-def run_batch(session: Session, cfg: dict, report: Callable[[dict], bool],
-              asset_ids: Optional[list] = None, retranscribe_before: Optional[str] = None,
-              limit: Optional[int] = None) -> dict:
-    ids = list(asset_ids) if asset_ids else pending_ids(session, cfg, limit, retranscribe_before)
-    progress = {"total": len(ids), "done": 0, "transcribed": 0, "no_speech": 0, "failed": 0, "current": None}
-    if not report(progress):
-        return progress
-    for asset_id in ids:
-        asset = session.get(Asset, asset_id)
-        if asset is None:
-            progress["done"] += 1
-            continue
-        progress["current"] = asset.files[0].filename if asset.files else None
-        if not report(progress):
-            break
-        progress[transcribe_asset(session, cfg, asset)] += 1
-        progress["done"] += 1
-    progress["current"] = None
-    report(progress)
-    return progress

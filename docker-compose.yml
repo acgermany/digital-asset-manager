@@ -5,6 +5,36 @@
 # .env (e.g. HOST_HOME=/srv, HOST_DRIVES=/media). Everything else (hot folder,
 # library, scan sources, network shares, Ollama) is set in the web UI → Configure.
 
+# Shared by the app and the workers: same image, same view of the host, same /data.
+x-dam-server: &dam-server
+  build: ./server
+  image: dam-server:latest
+  depends_on:
+    db:
+      condition: service_healthy
+  # SYS_ADMIN lets the app and workers mount SMB/NFS shares added on the Configure page.
+  cap_add:
+    - SYS_ADMIN
+    - DAC_READ_SEARCH
+  security_opt:
+    - apparmor:unconfined
+  restart: unless-stopped
+
+x-dam-env: &dam-env
+  DATABASE_URL: postgresql+psycopg://dam:${DB_PASSWORD:-dam}@db:5432/dam
+  # Label|path in container|path on host  (the UI shows host paths)
+  HOST_ROOTS: "Home|/host/home|${HOST_HOME:-${HOME}};Drives|/host/drives|${HOST_DRIVES:-/Volumes}"
+  DATA_DIR: /data
+  OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+  EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+  TRANSCRIBE_URL: ${TRANSCRIBE_URL:-http://host.docker.internal:8178}
+
+x-dam-volumes: &dam-volumes
+  - ${HOST_HOME:-${HOME}}:/host/home
+  # On Linux, add `:rslave` so drives plugged in later show up without a restart.
+  - ${HOST_DRIVES:-/Volumes}:/host/drives
+  - ./data:/data
+
 services:
 
   db:
@@ -16,9 +46,13 @@ services:
       POSTGRES_DB: dam
     command: >
       postgres -c shared_buffers=256MB -c work_mem=16MB -c maintenance_work_mem=128MB
-               -c effective_cache_size=1GB
+               -c effective_cache_size=1GB -c max_connections=200
     volumes:
       - dam-pgdata:/var/lib/postgresql/data
+    # Localhost only by default. To let workers on other machines connect, set
+    # DB_PUBLISH=0.0.0.0:5432 and a real DB_PASSWORD in .env (LAN only — never port-forward).
+    ports:
+      - "${DB_PUBLISH:-127.0.0.1:5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dam -d dam"]
       interval: 5s
@@ -28,36 +62,35 @@ services:
     restart: unless-stopped
 
   app:
-    build: ./server
+    <<: *dam-server
     container_name: dam-app
-    depends_on:
-      db:
-        condition: service_healthy
     ports:
       - "8000:8000"
-    # SYS_ADMIN lets the app mount SMB/NFS shares added on the Configure page.
-    cap_add:
-      - SYS_ADMIN
-      - DAC_READ_SEARCH
-    security_opt:
-      - apparmor:unconfined
     environment:
-      DATABASE_URL: postgresql+psycopg://dam:${DB_PASSWORD:-dam}@db:5432/dam
-      # Label|path in container|path on host  (the UI shows host paths)
-      HOST_ROOTS: "Home|/host/home|${HOST_HOME:-${HOME}};Drives|/host/drives|${HOST_DRIVES:-/Volumes}"
-      DATA_DIR: /data
-      WORKERS: ${WORKERS:-2}
-      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
-      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      <<: *dam-env
+      # Jobs run by the worker inside the app container (0 = leave all work to worker containers)
+      EMBEDDED_WORKER_CONCURRENCY: ${EMBEDDED_WORKER_CONCURRENCY:-2}
       APP_PASSWORD: ${APP_PASSWORD:-}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
-    volumes:
-      - ${HOST_HOME:-${HOME}}:/host/home
-      # On Linux, add `:rslave` so drives plugged in later show up without a restart.
-      - ${HOST_DRIVES:-/Volumes}:/host/drives
-      - ./data:/data
+    volumes: *dam-volumes
     mem_limit: 2g
-    restart: unless-stopped
+
+  # Extra queue consumers. None run by default; scale out with:
+  #   docker compose up -d --scale worker=3
+  # Which queues and how many jobs at once can also be changed live in the app
+  # (Workflows → Queues). Workers on other machines: see docker-compose.worker.yml.
+  worker:
+    <<: *dam-server
+    command: ["python", "-m", "dam.worker"]
+    environment:
+      <<: *dam-env
+      WORKER_QUEUES: ${WORKER_QUEUES:-ingest,render,embed,vision,speech}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+    volumes: *dam-volumes
+    deploy:
+      replicas: ${WORKER_REPLICAS:-0}
+    stop_grace_period: 40s
+    mem_limit: 1536m
 
   frontend:
     build: ./frontend

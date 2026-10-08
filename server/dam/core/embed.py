@@ -1,7 +1,7 @@
 """Batch embedding of assets with the Mac's Ollama model."""
 import hashlib
 import logging
-from typing import Callable, Optional
+from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
@@ -33,15 +33,19 @@ def text_hash(text_: str) -> str:
     return hashlib.sha256(text_.encode("utf-8")).hexdigest()
 
 
+def pending_where(model: str) -> tuple:
+    """SQL condition (alias `a`) for assets with no embedding for `model`."""
+    return ("NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.asset_id = a.id AND e.model = :model)",
+            {"model": model})
+
+
 def pending_ids(session: Session, model: str, limit: Optional[int] = None) -> list:
     """Assets with no embedding for `model`, valuable first, then oldest."""
-    sql = f"""
-        SELECT a.id FROM assets a
-        LEFT JOIN embeddings e ON e.asset_id = a.id AND e.model = :model
-        WHERE e.id IS NULL
-        ORDER BY {TIER_ORDER}, a.id
-    """ + (" LIMIT :limit" if limit else "")
-    params = {"model": model, **({"limit": limit} if limit else {})}
+    clause, params = pending_where(model)
+    sql = f"SELECT a.id FROM assets a WHERE {clause} ORDER BY {TIER_ORDER}, a.id"
+    if limit:
+        sql += " LIMIT :limit"
+        params["limit"] = limit
     return [r[0] for r in session.execute(text(sql), params)]
 
 
@@ -77,26 +81,3 @@ def embed_assets(session: Session, cfg: dict, asset_ids: list) -> int:
             set_={"source_hash": h, "embedding": vec, "created_at": text("now()")}))
     session.commit()
     return len(todo)
-
-
-def run_batch(session: Session, cfg: dict, report: Callable[[dict], bool],
-              limit: Optional[int] = None, reembed: bool = False) -> dict:
-    """Embed everything pending (or everything, with reembed). Resumable: each chunk commits."""
-    model = cfg["embed_model"]
-    if reembed:
-        ids = [r[0] for r in session.execute(text(f"SELECT a.id FROM assets a ORDER BY {TIER_ORDER}, a.id"))]
-        if limit:
-            ids = ids[:limit]
-    else:
-        ids = pending_ids(session, model, limit)
-    progress = {"total": len(ids), "done": 0, "embedded": 0, "model": model}
-    if not report(progress):
-        return progress
-    size = env.embed_batch_size
-    for start in range(0, len(ids), size):
-        chunk = ids[start:start + size]
-        progress["embedded"] += embed_assets(session, cfg, chunk)
-        progress["done"] += len(chunk)
-        if not report(progress):
-            break
-    return progress

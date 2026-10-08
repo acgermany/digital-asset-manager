@@ -15,7 +15,7 @@ const SPEC = {
   startLabel: 'Transcribe',
   redoLabel: 'Re-transcribe all',
   redoHelp: 'Redo every transcript (after changing the server, model or language)',
-  progress: bp => `${bp.transcribed} transcribed${bp.no_speech ? ` · ${bp.no_speech} no speech` : ''}`,
+  progress: bp => `${bp.transcribed || 0} transcribed${bp.no_speech ? ` · ${bp.no_speech} no speech` : ''}${bp.unreadable ? ` · ${bp.unreadable} unreadable` : ''}`,
   help: 'Precious items go first. With large-v3-turbo on the M5 Pro expect well under a minute per 10 minutes of audio. Transcripts are searchable, re-embedded, and given to the video summarizer.',
 }
 

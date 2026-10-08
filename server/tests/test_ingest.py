@@ -119,10 +119,10 @@ def test_watcher_waits_for_stable_file_and_ignores_review_folder(session, dirs):
 
 
 def test_queue_claim_is_exclusive(session):
-    queue.enqueue(session, "ingest")
+    queue.enqueue(session, "ingest", queue="ingest")
     session.commit()
-    a = queue.claim(session, ["default"], "w1")
-    b = queue.claim(session, ["default"], "w2")
+    a = queue.claim(session, ["ingest"], "w1")
+    b = queue.claim(session, ["ingest"], "w2")
     assert a is not None and b is None and a.status == "running"
 
 
@@ -130,3 +130,21 @@ def test_settings_override_env(session):
     settings_store.update(session, {"delete_mode": "trash"})
     session.commit()
     assert settings_store.get(session, "delete_mode") == "trash"
+
+
+def test_watcher_ignores_empty_placeholders(session, dirs):
+    hot, _ = dirs
+    write(os.path.join(hot, "big.mov"), b"")       # what Finder creates before copying data
+    seen = {}
+    for _ in range(3):
+        scan_once(session, hot, seen, stable_seconds=0)
+    assert session.query(Ingest).count() == 0
+
+
+def test_empty_file_is_never_a_duplicate(session, dirs):
+    hot, lib = dirs
+    i = ingest_file(session, hot, write(os.path.join(hot, "a.mov"), b""))
+    from dam.core.ingest import IngestError
+    with pytest.raises(IngestError, match="Empty file"):
+        process(session, i, cfg(hot, lib))
+    assert session.query(Asset).count() == 0
