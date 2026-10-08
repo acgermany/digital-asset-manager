@@ -32,6 +32,7 @@ def _file_row(f: File, asset: Optional[Asset], ms: list) -> dict:
         "value_tier": asset.value_tier if asset else None,
         "protected": bool(asset and asset.protected),
         "kind": asset.kind if asset else None,
+        "tags": (asset.tags or []) if asset else [],
     }
 
 
@@ -42,6 +43,7 @@ DUP_ASSETS = "SELECT asset_id FROM files WHERE asset_id IS NOT NULL GROUP BY ass
 def list_files(limit: int = 100, offset: int = 0, search: Optional[str] = None,
                duplicates_only: bool = False, marked_only: bool = False,
                tier: Optional[str] = None, source: Optional[str] = None, kind: Optional[str] = None,
+               tag: Optional[str] = None,
                session: Session = Depends(get_session)):
     q = session.query(File, Asset).outerjoin(Asset, Asset.id == File.asset_id)
     if search:
@@ -57,6 +59,8 @@ def list_files(limit: int = 100, offset: int = 0, search: Optional[str] = None,
         q = q.filter(File.source == source)
     if kind:
         q = q.filter(Asset.kind == kind)
+    if tag:
+        q = q.filter(Asset.tags.contains([tag]))
     total = q.count()
     rows = q.order_by(File.scanned_at.desc(), File.id.desc()).limit(limit).offset(offset).all()
     ms = mounts(session)

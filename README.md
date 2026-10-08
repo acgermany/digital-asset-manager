@@ -55,8 +55,12 @@ mounted), files wait in the hot folder.
 
 ## Web app
 
-- **Dashboard**: inventory, duplicate and protected-content totals
-- **Files**: every known file copy, searchable
+- **Dashboard**: inventory, duplicate and protected-content totals; library map (storage by
+  provenance and file type, capture-date timeline)
+- **Files**: grid / list / similarity-map views; keyword + semantic search (Ollama on the Mac);
+  viewer for images (HEIC/RAW converted), video (ffmpeg proxies when needed), PDF, audio, text,
+  with an Info panel showing all stored metadata (checksum, ingest history, copies, EXIF,
+  mediainfo, tier and reasons, editable tags, history)
 - **Workflows**: Ingest (live activity), Review, Duplicates, Scan (catalog existing folders in place)
 - **Configure**: hot folder, library, scan sources, drives, network shares, Ollama
 

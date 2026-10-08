@@ -26,6 +26,8 @@ def build_search_text(asset: Asset, session: Session) -> str:
         folders.update(p for p in os.path.dirname(f.path).split("/")[-4:] if p)
     if folders:
         parts.append("folders: " + " ".join(sorted(folders)))
+    if asset.tags:
+        parts.append("tags: " + ", ".join(asset.tags))
     parts.append(f"type: {asset.kind}")
     parts.append(f"tier: {asset.value_tier}")
     if asset.captured_at:
@@ -53,6 +55,24 @@ def build_search_text(asset: Asset, session: Session) -> str:
     if doc.get("strong_terms") or doc.get("weak_terms"):
         parts.append("terms: " + ", ".join((doc.get("strong_terms") or []) + (doc.get("weak_terms") or [])))
     return re.sub(r"\s+", " ", " | ".join(parts)).strip()
+
+
+def normalize_tags(tags: list) -> list:
+    """Trimmed, de-duplicated (case-insensitively), max 50 chars each, order kept."""
+    out, seen = [], set()
+    for t in tags or []:
+        t = re.sub(r"\s+", " ", str(t)).strip()[:50]
+        if t and t.casefold() not in seen:
+            seen.add(t.casefold())
+            out.append(t)
+    return out[:100]
+
+
+def set_tags(session: Session, asset: Asset, tags: list, actor: str = "user") -> None:
+    old = list(asset.tags or [])
+    asset.tags = normalize_tags(tags)
+    asset.search_text = build_search_text(asset, session)
+    events.log(session, "tags_changed", actor=actor, asset_id=asset.id, old=old, new=asset.tags)
 
 
 def set_tier(session: Session, asset: Asset, tier: str, actor: str = "user",

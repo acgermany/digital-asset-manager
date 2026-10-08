@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api, fmtBytes } from '../api'
 import SegmentPanel from './SegmentPanel'
+import InfoPanel from './InfoPanel'
 
 function fmtDuration(s) {
   if (!s) return null
@@ -62,7 +63,9 @@ export default function Viewer({ files, index, onIndex, onClose }) {
   const file = files[index]
   const [loaded, setInfo] = useState(null)
   const [err, setErr]     = useState(null)
+  const [side, setSide]   = useState(() => { try { return localStorage.getItem('dam.viewer.side') || 'info' } catch { return 'info' } })
   const mediaRef = useRef(null)
+  const chooseSide = (v) => { setSide(v); try { localStorage.setItem('dam.viewer.side', v) } catch { /* ignore */ } }
   const current = useRef(null)
   current.current = file?.id
 
@@ -95,15 +98,17 @@ export default function Viewer({ files, index, onIndex, onClose }) {
       if (e.key === 'Escape') onClose()
       if (e.key === 'ArrowRight' && index < files.length - 1) onIndex(index + 1)
       if (e.key === 'ArrowLeft' && index > 0) onIndex(index - 1)
+      if (e.key === 'i') chooseSide(side === 'none' ? 'info' : 'none')
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [index, files.length, onIndex, onClose])
+  }, [index, files.length, onIndex, onClose, side])
 
   if (!file) return null
   const type = info?.type
   const playable = type === 'video' && (!info.proxy || info.proxy.status === 'ready')
-  const withSegments = (type === 'video' && playable) || type === 'audio'
+  const segmentsAllowed = (type === 'video' && playable) || type === 'audio'
+  const panel = side === 'segments' && !segmentsAllowed ? 'info' : side
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -111,17 +116,18 @@ export default function Viewer({ files, index, onIndex, onClose }) {
         <div className="modal-header">
           <button className="btn sm" disabled={index === 0} onClick={() => onIndex(index - 1)} title="Previous (←)">‹</button>
           <button className="btn sm" disabled={index >= files.length - 1} onClick={() => onIndex(index + 1)} title="Next (→)">›</button>
-          <span className="modal-title" title={file.filepath}>{file.filename}</span>
+          <span className="modal-title" title={file.filepath || info?.filepath}>{file.filename}</span>
           <span className="viewer-meta">
             {index + 1} / {files.length} · {fmtBytes(file.filesize)}
             {info?.duration ? ` · ${fmtDuration(info.duration)}` : ''}
             {info?.width ? ` · ${info.width}×${info.height}` : ''}
           </span>
+          <button className={`btn sm${panel !== 'none' ? ' primary' : ''}`} onClick={() => chooseSide(panel === 'none' ? 'info' : 'none')} title="Show details (i)">Info</button>
           <a href={`/api/files/${file.id}/content`} download={file.filename} className="btn sm">Download</a>
           <button className="btn sm" onClick={onClose}>✕</button>
         </div>
 
-        <div className={`viewer-body${withSegments ? ' with-segments' : ''}`}>
+        <div className={`viewer-body${panel !== 'none' ? ' with-segments' : ''}`}>
           <div className="viewer-stage">
             {err && <div className="viewer-msg" style={{ color: 'var(--red)' }}>{err}</div>}
             {!info && !err && <div className="viewer-msg"><span className="spinner" /></div>}
@@ -144,13 +150,20 @@ export default function Viewer({ files, index, onIndex, onClose }) {
               </div>
             )}
           </div>
-          {withSegments && (
+          {panel !== 'none' && (
             <div className="viewer-side">
-              <SegmentPanel fileId={file.id} mediaRef={mediaRef} />
+              {segmentsAllowed && (
+                <div className="viewer-side-tabs">
+                  <button className={`subnav-btn${panel === 'info' ? ' active' : ''}`} onClick={() => chooseSide('info')}>Info</button>
+                  <button className={`subnav-btn${panel === 'segments' ? ' active' : ''}`} onClick={() => chooseSide('segments')}>Segments</button>
+                </div>
+              )}
+              {panel === 'info' && <InfoPanel fileId={file.id} />}
+              {panel === 'segments' && <SegmentPanel fileId={file.id} mediaRef={mediaRef} />}
             </div>
           )}
         </div>
-        <div className="viewer-path">{file.filepath}</div>
+        <div className="viewer-path">{file.filepath || info?.filepath}</div>
       </div>
     </div>
   )

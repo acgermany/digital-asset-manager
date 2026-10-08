@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
+import LibraryCharts from './LibraryCharts'
 
 function fmt(bytes) {
   if (!bytes) return '0 B'
@@ -141,6 +142,8 @@ export default function Dashboard({ onGoScan }) {
           sub={`${(stats.ingests?.duplicate_deleted || 0).toLocaleString()} duplicates removed`}
         />
       </div>
+
+      <LibraryCharts />
 
       {scan?.running && (
         <div className="card" style={{ marginTop: 8 }}>

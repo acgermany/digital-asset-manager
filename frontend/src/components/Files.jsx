@@ -3,6 +3,7 @@ import { api, fmtBytes } from '../api'
 import { useAIStatus } from '../hooks'
 import SemanticToggle from './SemanticToggle'
 import Viewer from './Viewer'
+import SimilarityMap from './SimilarityMap'
 
 const PAGE = 60
 const KINDS = [['', 'All'], ['image', 'Images'], ['video', 'Videos'], ['audio', 'Audio'], ['document', 'Documents']]
@@ -40,7 +41,8 @@ export default function Files() {
   const [view, setView]       = useState(() => readPref('dam.files.view', 'grid'))
   const [err, setErr]         = useState(null)
   const [busy, setBusy]       = useState(false)
-  const [viewing, setViewing] = useState(null)       // index into rows
+  const [viewing, setViewing] = useState(null)       // index into the list being viewed
+  const [viewList, setViewList] = useState(null)     // map points opened in the viewer
   const ai = useAIStatus()
   const semanticReady = ai.status?.semantic_enabled && ai.status?.state === 'ready'
   const reqId = useRef(0)
@@ -133,10 +135,21 @@ export default function Files() {
         <div className="view-toggle">
           <button className={`btn sm${view === 'grid' ? ' primary' : ''}`} onClick={() => changeView('grid')}>Grid</button>
           <button className={`btn sm${view === 'list' ? ' primary' : ''}`} onClick={() => changeView('list')}>List</button>
+          <button className={`btn sm${view === 'map' ? ' primary' : ''}`} onClick={() => changeView('map')} title="Similarity map">Map</button>
         </div>
       </div>
 
-      {data && rows.length === 0 && (
+      {view === 'map' && (
+        <SimilarityMap
+          kind={kind}
+          onOpen={(points, i) => {
+            setViewList(points.map(p => ({ id: p.file_id, filename: p.filename, filesize: p.filesize, kind: p.kind, value_tier: p.tier })))
+            setViewing(i)
+          }}
+        />
+      )}
+
+      {view !== 'map' && data && rows.length === 0 && (
         <div className="card cfg-empty" style={{ textAlign: 'center', padding: 40 }}>
           {searching ? 'Nothing matched.' : 'No files yet. Drop files in the hot folder or run a scan.'}
         </div>
@@ -195,7 +208,7 @@ export default function Files() {
         </div>
       )}
 
-      {pages > 1 && (
+      {view !== 'map' && pages > 1 && (
         <div className="pagination">
           <button className="btn sm" disabled={page === 0} onClick={() => setPage(0)}>«</button>
           <button className="btn sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹</button>
@@ -205,8 +218,9 @@ export default function Files() {
         </div>
       )}
 
-      {viewing !== null && rows[viewing] && (
-        <Viewer files={rows} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />
+      {viewing !== null && (viewList || rows)[viewing] && (
+        <Viewer files={viewList || rows} index={viewing} onIndex={setViewing}
+                onClose={() => { setViewing(null); setViewList(null) }} />
       )}
     </>
   )

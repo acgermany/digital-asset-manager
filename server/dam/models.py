@@ -50,6 +50,8 @@ class Asset(Base):
     protected: Mapped[bool] = mapped_column(Boolean, default=False)
     needs_backup: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    tags: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+
     # Flattened text used for keyword search and as the embedding source
     search_text: Mapped[Optional[str]] = mapped_column(Text)
     metadata_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|done|failed
@@ -64,6 +66,7 @@ class Asset(Base):
     __table_args__ = (
         Index("idx_assets_tier", "value_tier"),
         Index("idx_assets_kind", "kind"),
+        Index("idx_assets_tags", "tags", postgresql_using="gin"),
         Index("idx_assets_search_trgm", "search_text", postgresql_using="gin",
               postgresql_ops={"search_text": "gin_trgm_ops"}),
     )

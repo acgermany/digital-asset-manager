@@ -62,6 +62,12 @@ export const api = {
   startEmbed:     (reembed = false)    => jreq('/ai/embed', 'POST', { reembed }),
   cancelEmbed:    ()                   => req('/ai/embed/cancel', { method: 'POST' }),
   search:         (params)             => req('/search?' + new URLSearchParams(params)),
+  // Assets / library
+  fileDetails:    (fileId)             => req(`/files/${fileId}/details`),
+  updateAsset:    (assetId, changes)   => jreq(`/assets/${assetId}`, 'PATCH', changes),
+  tags:           ()                   => req('/tags'),
+  overview:       ()                   => req('/library/overview'),
+  libraryMap:     ()                   => req('/library/map'),
   // Viewer
   viewInfo:       (fileId)             => req(`/files/${fileId}/viewinfo`),
   retryProxy:     (fileId)             => req(`/files/${fileId}/proxy/retry`, { method: 'POST' }),
