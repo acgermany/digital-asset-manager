@@ -10,7 +10,7 @@ import time
 from sqlalchemy import text
 
 from . import queue
-from .core import ai, describe, embed, settings_store
+from .core import ai, describe, embed, settings_store, transcribe
 from .db import SessionLocal
 from .models import Job
 
@@ -147,29 +147,60 @@ def main() -> None:
         time.sleep(delay)
 
 
-def vision_main() -> None:
-    """Separate loop for vision descriptions: hours-long batches must not block
-    the embedding model's warm-up or semantic search."""
+def run_transcribe_job(session, job: Job, cfg: dict) -> None:
+    status = transcribe.server_status(cfg)
+    if not status["reachable"]:
+        queue.defer(session, job, status["error"] or "Transcription server not reachable", seconds=60)
+        return
+
+    def report(progress: dict) -> bool:
+        return queue.heartbeat(session, job, progress)
+
+    payload = job.payload or {}
+    try:
+        transcribe.run_batch(session, cfg, report, asset_ids=payload.get("asset_ids"),
+                             retranscribe_before=payload.get("retranscribe_before"), limit=payload.get("limit"))
+    except ai.AIUnavailable as e:
+        session.rollback()
+        queue.defer(session, session.get(Job, job.id), f"Paused: {e}", seconds=60)
+        return
+    queue.complete(session, job)
+
+
+def auto_transcribe(session, cfg) -> None:
+    if not cfg.get("transcribe_auto"):
+        return
+    busy = session.execute(text(
+        "SELECT 1 FROM jobs WHERE kind = 'transcribe_batch' AND status IN ('queued','running','cancelling') LIMIT 1")).first()
+    if busy or not transcribe.pending_ids(session, cfg, limit=1):
+        return
+    queue.enqueue(session, "transcribe_batch", queue="speech", max_attempts=50, payload={"auto": True, "limit": 200})
+    session.commit()
+
+
+def batch_loop(queue_name: str, run_job, auto) -> None:
+    """Loop for long-running Mac batches (vision, speech). Each kind gets its own process so
+    an hours-long batch of one never blocks the other or the embedding model."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    worker_id = WORKER_ID.replace(":ai", ":vision")
+    worker_id = WORKER_ID.replace(":ai", f":{queue_name}")
     while True:
         session = SessionLocal()
         delay = IDLE_POLL
         try:
             cfg = settings_store.all_settings(session, fresh=True)
-            auto_describe(session, cfg)
-            job = queue.claim(session, ["vision"], worker_id)
+            auto(session, cfg)
+            job = queue.claim(session, [queue_name], worker_id)
             if job is not None:
                 delay = 0
                 try:
-                    run_describe_job(session, job, cfg)
+                    run_job(session, job, cfg)
                 except Exception as e:  # noqa: BLE001
-                    log.exception("describe job %s failed", job.id)
+                    log.exception("%s job %s failed", job.kind, job.id)
                     session.rollback()
                     queue.fail(session, session.get(Job, job.id), f"{type(e).__name__}: {e}")
         except Exception:  # noqa: BLE001
-            log.exception("vision worker loop error")
+            log.exception("%s worker loop error", queue_name)
             session.rollback()
             delay = 15
         finally:
@@ -179,4 +210,9 @@ def vision_main() -> None:
 
 if __name__ == "__main__":
     import sys
-    vision_main() if "--vision" in sys.argv else main()
+    if "--vision" in sys.argv:
+        batch_loop("vision", run_describe_job, auto_describe)
+    elif "--speech" in sys.argv:
+        batch_loop("speech", run_transcribe_job, auto_transcribe)
+    else:
+        main()

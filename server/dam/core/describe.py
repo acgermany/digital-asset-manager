@@ -129,6 +129,11 @@ def build_prompt(asset: Asset, cfg: dict, context: dict) -> str:
     out = template
     for key, value in context.items():   # plain replace: user prompts may contain other braces
         out = out.replace("{" + key + "}", str(value))
+    if asset.kind == "video" and cfg.get("describe_use_transcript") and asset.transcript:
+        excerpt = asset.transcript[:1500] + ("…" if len(asset.transcript) > 1500 else "")
+        out += ("\n\nSpeech transcript of the video's audio (may contain errors). Use it for what is said "
+                "and what the occasion is, but only describe people, places and things that are actually "
+                f"visible in the frames:\n{excerpt}")
     return out
 
 

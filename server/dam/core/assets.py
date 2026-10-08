@@ -32,6 +32,8 @@ def build_search_text(asset: Asset, session: Session) -> str:
         parts.append("description: " + asset.description)
     if asset.description_tags:
         parts.append("keywords: " + ", ".join(asset.description_tags))
+    if asset.transcript:
+        parts.append("transcript: " + asset.transcript[:3000])
     parts.append(f"type: {asset.kind}")
     parts.append(f"tier: {asset.value_tier}")
     if asset.captured_at:

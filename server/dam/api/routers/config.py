@@ -97,6 +97,15 @@ class ConfigUpdate(BaseModel):
     describe_keep_alive: Optional[str] = None
     describe_think: Optional[bool] = None
     describe_max_tokens: Optional[int] = None
+    describe_use_transcript: Optional[bool] = None
+    transcribe_url: Optional[str] = None
+    transcribe_api: Optional[str] = None
+    transcribe_model: Optional[str] = None
+    transcribe_language: Optional[str] = None
+    transcribe_kinds: Optional[list[str]] = None
+    transcribe_auto: Optional[bool] = None
+    transcribe_critical: Optional[bool] = None
+    transcribe_max_minutes: Optional[int] = None
 
 
 @router.put("/config")
@@ -165,6 +174,23 @@ def update_config(body: ConfigUpdate, session: Session = Depends(get_session)):
                         ("describe_max_tokens", 128, 8192)):
         if key in changes and not lo <= changes[key] <= hi:
             raise HTTPException(400, f"{key} must be between {lo} and {hi}")
+    if "transcribe_url" in changes:
+        url = (changes["transcribe_url"] or "").strip().rstrip("/")
+        if not re.match(r"^https?://[^\s/]+(:\d+)?(/.*)?$", url):
+            raise HTTPException(400, "Transcription URL must look like http://host:8178")
+        changes["transcribe_url"] = url
+    if "transcribe_api" in changes and changes["transcribe_api"] not in ("whispercpp", "openai"):
+        raise HTTPException(400, "transcribe_api must be 'whispercpp' or 'openai'")
+    if "transcribe_model" in changes and not re.match(r"^[\w.\-:/]{1,128}$", changes["transcribe_model"] or ""):
+        raise HTTPException(400, "Invalid transcription model name")
+    if "transcribe_language" in changes:
+        changes["transcribe_language"] = (changes["transcribe_language"] or "auto").strip().lower()
+        if not re.match(r"^(auto|[a-z]{2,3})$", changes["transcribe_language"]):
+            raise HTTPException(400, "Language must be 'auto' or a code like en, es, fr")
+    if "transcribe_kinds" in changes:
+        changes["transcribe_kinds"] = [k for k in changes["transcribe_kinds"] or [] if k in ("video", "audio")]
+    if "transcribe_max_minutes" in changes and not 1 <= changes["transcribe_max_minutes"] <= 600:
+        raise HTTPException(400, "transcribe_max_minutes must be between 1 and 600")
     for key in ("embed_keep_alive", "describe_keep_alive"):
         if key in changes and not re.match(r"^(-1|0|\d+(s|m|h))$", changes[key] or ""):
             raise HTTPException(400, "Keep-alive must look like 10m, 1h, 0 or -1")

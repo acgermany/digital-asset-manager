@@ -68,6 +68,12 @@ export const api = {
   cancelDescribe: ()                   => req('/ai/describe/cancel', { method: 'POST' }),
   describeAsset:  (assetId)            => req(`/assets/${assetId}/describe`, { method: 'POST' }),
   aiModels:       ()                   => req('/ai/models'),
+  // Transcripts (Whisper)
+  transcribeStatus: ()                    => req('/ai/transcribe/status'),
+  startTranscribe:  (retranscribe = false) => jreq('/ai/transcribe', 'POST', { retranscribe }),
+  cancelTranscribe: ()                    => req('/ai/transcribe/cancel', { method: 'POST' }),
+  transcribeAsset:  (assetId)             => req(`/assets/${assetId}/transcribe`, { method: 'POST' }),
+  testTranscribe:   ()                    => req('/ai/transcribe/test', { method: 'POST' }),
   // Assets / library
   fileDetails:    (fileId)             => req(`/files/${fileId}/details`),
   updateAsset:    (assetId, changes)   => jreq(`/assets/${assetId}`, 'PATCH', changes),

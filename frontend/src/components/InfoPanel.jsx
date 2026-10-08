@@ -3,6 +3,11 @@ import { api, fmtBytes } from '../api'
 
 const TIERS = ['critical', 'precious', 'standard', 'low', 'junk']
 
+function fmtTime(sec) {
+  const s = Math.floor(sec || 0), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
+  return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(s % 60).padStart(2, '0')}`
+}
+
 function when(iso) {
   return iso ? new Date(iso).toLocaleString() : '—'
 }
@@ -85,7 +90,7 @@ function TagEditor({ tags, onSave, suggestions }) {
   )
 }
 
-export default function InfoPanel({ fileId }) {
+export default function InfoPanel({ fileId, onSeek }) {
   const [d, setD]       = useState(null)
   const [err, setErr]   = useState(null)
   const [sugg, setSugg] = useState([])
@@ -102,8 +107,8 @@ export default function InfoPanel({ fileId }) {
 
   useEffect(() => { setD(null); load() }, [load])
 
-  // While a description is being written for this file, poll until it lands.
-  const pending = d?.asset?.describe_pending
+  // While a description or transcript is being made for this file, poll until it lands.
+  const pending = d?.asset?.describe_pending || d?.asset?.transcribe_pending
   useEffect(() => {
     if (!pending) return
     const t = setInterval(load, 2500)
@@ -125,6 +130,15 @@ export default function InfoPanel({ fileId }) {
     try {
       await api.describeAsset(d.asset.id)
       setD(prev => ({ ...prev, asset: { ...prev.asset, describe_pending: true, description_error: null } }))
+    } catch (e) {
+      setErr(e.message)
+    }
+  }
+
+  const transcribeNow = async () => {
+    try {
+      await api.transcribeAsset(d.asset.id)
+      setD(prev => ({ ...prev, asset: { ...prev.asset, transcribe_pending: true, transcript_error: null } }))
     } catch (e) {
       setErr(e.message)
     }
@@ -164,6 +178,31 @@ export default function InfoPanel({ fileId }) {
             {a.describe_pending
               ? <span className="cfg-muted"><span className="spinner sm" /> Writing description… (loading the model can take a few seconds)</span>
               : <button className="btn sm" onClick={describeNow}>{a.description ? 'Re-describe' : 'Describe now'}</button>}
+          </div>
+        </Section>
+      )}
+
+      {(a.kind === 'video' || a.kind === 'audio') && (
+        <Section title="Transcript" count={a.transcript_segments.length || null}>
+          {a.transcribed_at && !a.transcript && <div className="cfg-muted">No speech found.</div>}
+          {a.transcript && (a.transcript_segments.length
+            ? <div className="transcript">
+                {a.transcript_segments.map((seg, i) => (
+                  <div key={i} className="transcript-line">
+                    <button className="transcript-time" onClick={() => onSeek?.(seg.start)} title="Jump to this moment">{fmtTime(seg.start)}</button>
+                    <span>{seg.text}</span>
+                  </div>
+                ))}
+              </div>
+            : <p className="info-desc">{a.transcript}</p>)}
+          {!a.transcribed_at && <div className="cfg-muted">{a.transcript_error || 'Not transcribed yet.'}</div>}
+          {a.transcribed_at && (
+            <div className="cfg-muted">{a.transcript_model}{a.transcript_language ? ` · ${a.transcript_language}` : ''} · {when(a.transcribed_at)}</div>
+          )}
+          <div style={{ marginTop: 8 }}>
+            {a.transcribe_pending
+              ? <span className="cfg-muted"><span className="spinner sm" /> Transcribing…</span>
+              : <button className="btn sm" onClick={transcribeNow}>{a.transcribed_at ? 'Re-transcribe' : 'Transcribe now'}</button>}
           </div>
         </Section>
       )}

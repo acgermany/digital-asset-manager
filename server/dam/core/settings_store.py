@@ -1,4 +1,5 @@
 """Editable settings: stored in app_settings, defaulting to environment variables."""
+import os
 import time
 from typing import Any
 
@@ -44,6 +45,16 @@ DEFAULTS: dict = {
     "describe_keep_alive": "10m",
     "describe_think": False,
     "describe_max_tokens": 4096,  # thinking models spend much of this before answering
+    "describe_use_transcript": True,  # give the video summarizer what was said
+    # Speech-to-text (whisper.cpp server on the Mac, or any OpenAI-compatible server)
+    "transcribe_url": os.environ.get("TRANSCRIBE_URL", "http://host.docker.internal:8178"),
+    "transcribe_api": "whispercpp",   # whispercpp | openai
+    "transcribe_model": "whisper-1",  # sent to OpenAI-compatible servers only
+    "transcribe_language": "auto",
+    "transcribe_kinds": ["video", "audio"],
+    "transcribe_auto": False,
+    "transcribe_critical": False,
+    "transcribe_max_minutes": 120,
 }
 
 EDITABLE = set(DEFAULTS)

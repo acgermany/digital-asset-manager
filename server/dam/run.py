@@ -54,6 +54,7 @@ def main() -> None:
         "watcher": [sys.executable, "-m", "dam.watcher"],
         "ai-worker": [sys.executable, "-m", "dam.ai_worker"],
         "vision-worker": [sys.executable, "-m", "dam.ai_worker", "--vision"],
+        "speech-worker": [sys.executable, "-m", "dam.ai_worker", "--speech"],
         **{f"worker-{i}": [sys.executable, "-m", "dam.worker"] for i in range(workers)},
     }
     procs = {name: subprocess.Popen(cmd) for name, cmd in commands.items()}

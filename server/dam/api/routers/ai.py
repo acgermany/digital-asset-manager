@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ... import queue
-from ...core import ai, describe, embed, events, search as search_ops, settings_store
+from ...core import ai, describe, embed, events, search as search_ops, settings_store, transcribe
 from ...db import get_session
 from ...models import Asset, Job
 from ..deps import mounts
@@ -242,3 +242,70 @@ def installed_models(session: Session = Depends(get_session)):
                "size": m.get("size"), "parameters": (m.get("details") or {}).get("parameter_size")}
               for m in r.json().get("models", [])]
     return {"reachable": True, "error": None, "models": sorted(models, key=lambda m: m["name"])}
+
+
+# ---------------------------------------------------------------- transcripts (Whisper)
+
+def _transcribe_status(session: Session) -> dict:
+    cfg = settings_store.all_settings(session)
+    server = transcribe.server_status(cfg)
+    job = session.query(Job).filter_by(kind="transcribe_batch").order_by(Job.id.desc()).first()
+    return {"url": cfg["transcribe_url"], "api": cfg["transcribe_api"], "reachable": server["reachable"],
+            "error": server["error"], "auto": bool(cfg.get("transcribe_auto")),
+            "coverage": transcribe.coverage(session, cfg), "batch": _job_dict(job)}
+
+
+@router.get("/ai/transcribe/status")
+def transcribe_status(session: Session = Depends(get_session)):
+    return _transcribe_status(session)
+
+
+class TranscribeBody(BaseModel):
+    retranscribe: bool = False
+    limit: Optional[int] = None
+
+
+@router.post("/ai/transcribe")
+def start_transcribe(body: TranscribeBody, session: Session = Depends(get_session)):
+    active = session.query(Job).filter(Job.kind == "transcribe_batch", Job.payload["asset_ids"].is_(None),
+                                       Job.status.in_(("queued", "running", "cancelling"))).first()
+    if active:
+        raise HTTPException(400, "A transcription batch is already running")
+    payload = {"limit": body.limit}
+    if body.retranscribe:
+        payload["retranscribe_before"] = datetime.now(timezone.utc).isoformat()
+    queue.enqueue(session, "transcribe_batch", queue="speech", max_attempts=50, payload=payload)
+    events.log(session, "transcribe_batch_started", actor="user", retranscribe=body.retranscribe)
+    session.commit()
+    return _transcribe_status(session)
+
+
+@router.post("/ai/transcribe/cancel")
+def cancel_transcribe(session: Session = Depends(get_session)):
+    jobs = session.query(Job).filter(Job.kind == "transcribe_batch", Job.status.in_(("queued", "running"))).all()
+    if not jobs:
+        raise HTTPException(400, "No transcription batch is running")
+    for job in jobs:
+        job.status = "cancelled" if job.status == "queued" else "cancelling"
+    settings_store.update(session, {"transcribe_auto": False})
+    session.commit()
+    return _transcribe_status(session)
+
+
+@router.post("/assets/{asset_id}/transcribe")
+def transcribe_one(asset_id: int, session: Session = Depends(get_session)):
+    asset = session.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(404, "Asset not found")
+    if asset.kind not in ("video", "audio"):
+        raise HTTPException(400, "Only videos and audio can be transcribed")
+    asset.transcript_error = None
+    queue.enqueue(session, "transcribe_batch", queue="speech", priority=50, max_attempts=10,
+                  payload={"asset_ids": [asset_id]})
+    session.commit()
+    return {"status": "queued"}
+
+
+@router.post("/ai/transcribe/test")
+def test_transcribe(session: Session = Depends(get_session)):
+    return transcribe.server_status(settings_store.all_settings(session, fresh=True))

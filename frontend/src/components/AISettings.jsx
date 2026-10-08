@@ -148,6 +148,10 @@ export default function AISettings({ settings: s, defaults, embedDims, save }) {
           Let the model think first (slower)
         </label>
       </div>
+      <label className="cfg-toggle">
+        <input type="checkbox" checked={!!s.describe_use_transcript} onChange={e => save({ describe_use_transcript: e.target.checked })} />
+        Give the video summarizer the speech transcript (when there is one)
+      </label>
       <PromptField
         label="Image prompt"
         value={s.describe_image_prompt}
@@ -163,6 +167,84 @@ export default function AISettings({ settings: s, defaults, embedDims, save }) {
         help="{frames} and {duration} are filled in for each video. A final line starting with “Tags:” is turned into keywords."
       />
       <div className="cfg-help">Changed the model or prompts? Use “Re-describe all” in Workflows → AI to redo existing descriptions.</div>
+
+      <TranscriptionSettings s={s} save={save} />
+    </>
+  )
+}
+
+function TranscriptionSettings({ s, save }) {
+  const [url, setUrl]   = useState(s.transcribe_url)
+  const [test, setTest] = useState(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => setUrl(s.transcribe_url), [s.transcribe_url])
+  const kinds = s.transcribe_kinds || []
+  const toggleKind = k => save({ transcribe_kinds: kinds.includes(k) ? kinds.filter(x => x !== k) : [...kinds, k] })
+
+  const connect = async () => {
+    setBusy(true)
+    setTest(null)
+    if (url === s.transcribe_url || await save({ transcribe_url: url }, 'Transcription server saved')) {
+      try { setTest(await api.testTranscribe()) } catch (e) { setTest({ reachable: false, error: e.message }) }
+    }
+    setBusy(false)
+  }
+
+  return (
+    <>
+      <div className="cfg-subhead">Transcripts (Whisper speech-to-text)</div>
+      <div className="cfg-help" style={{ marginTop: 0, marginBottom: 10 }}>
+        Audio from videos and recordings is sent to a Whisper server on your Mac. Transcripts are searchable and help video summaries.
+      </div>
+      <div className="cfg-inline" style={{ paddingTop: 0 }}>
+        <label>Server URL
+          <input className="search" style={{ width: 300 }} value={url} onChange={e => setUrl(e.target.value)} />
+        </label>
+        <label>Server type
+          <select className="search" value={s.transcribe_api} onChange={e => save({ transcribe_api: e.target.value })}>
+            <option value="whispercpp">whisper.cpp server (/inference)</option>
+            <option value="openai">OpenAI-compatible (/v1/audio/transcriptions)</option>
+          </select>
+        </label>
+        <button className="btn sm primary" onClick={connect} disabled={busy}>{busy ? 'Testing…' : 'Save & test'}</button>
+        {test && (test.reachable ? <Status ok>Server reachable</Status> : <Status>Not reachable</Status>)}
+      </div>
+      {test?.error && <div className="cfg-help">{test.error}</div>}
+      <div className="cfg-inline">
+        {s.transcribe_api === 'openai' && (
+          <label>Model name
+            <input className="search" style={{ width: 160 }} defaultValue={s.transcribe_model} key={s.transcribe_model}
+                   onBlur={e => e.target.value !== s.transcribe_model && save({ transcribe_model: e.target.value })} />
+          </label>
+        )}
+        <label>Language
+          <input className="search" style={{ width: 80 }} defaultValue={s.transcribe_language} key={s.transcribe_language}
+                 title="auto, or a code like en, es, fr"
+                 onBlur={e => e.target.value !== s.transcribe_language && save({ transcribe_language: e.target.value })} />
+        </label>
+        <NumberSetting label="Skip recordings longer than" value={s.transcribe_max_minutes} min={1} max={600} suffix="min"
+                       onSave={v => save({ transcribe_max_minutes: v })} />
+      </div>
+      <div className="cfg-inline">
+        <label className="cfg-toggle" style={{ marginTop: 0 }}>
+          <input type="checkbox" checked={kinds.includes('video')} onChange={() => toggleKind('video')} /> Transcribe videos
+        </label>
+        <label className="cfg-toggle" style={{ marginTop: 0 }}>
+          <input type="checkbox" checked={kinds.includes('audio')} onChange={() => toggleKind('audio')} /> Transcribe audio (voice memos)
+        </label>
+        <label className="cfg-toggle" style={{ marginTop: 0 }}>
+          <input type="checkbox" checked={!!s.transcribe_auto} onChange={e => save({ transcribe_auto: e.target.checked }, e.target.checked ? 'New recordings will be transcribed automatically' : 'Auto-transcribe off')} />
+          Transcribe new files automatically
+        </label>
+        <label className="cfg-toggle" style={{ marginTop: 0 }}>
+          <input type="checkbox" checked={!!s.transcribe_critical} onChange={e => save({ transcribe_critical: e.target.checked })} />
+          Include critical (financial) recordings
+        </label>
+      </div>
+      <div className="cfg-help">
+        The server on this Mac: <code>whisper-server -m ~/whisper-models/ggml-large-v3-turbo-q5_0.bin --host 127.0.0.1 --port 8178 -l auto</code>.
+        Once the app runs on the Linux box, start it with <code>--host 0.0.0.0</code> and point this URL at the Mac.
+      </div>
     </>
   )
 }

@@ -61,8 +61,26 @@ mounted), files wait in the hot folder.
   viewer for images (HEIC/RAW converted), video (ffmpeg proxies when needed), PDF, audio, text,
   with an Info panel showing all stored metadata (checksum, ingest history, copies, EXIF,
   mediainfo, tier and reasons, editable tags, history)
-- **Workflows**: Ingest (live activity), Review, Duplicates, Scan (catalog existing folders in place)
+- **Workflows**: Ingest (live activity), Review, Duplicates, Scan (catalog existing folders in place),
+  AI (photo/video descriptions, Whisper transcripts, embeddings)
 - **Configure**: hot folder, library, scan sources, drives, network shares, Ollama
+
+## AI on the Mac
+
+All AI runs on the Mac; the app works without it.
+
+| What | Server | Default model |
+|---|---|---|
+| Embeddings (semantic search, map) | Ollama | `nomic-embed-text` |
+| Photo captions, video summaries | Ollama | `qwen3-vl:8b` |
+| Transcripts (videos, voice memos) | whisper.cpp `whisper-server` | `large-v3-turbo` (q5_0) |
+
+```bash
+brew install whisper-cpp
+whisper-server -m ~/whisper-models/ggml-large-v3-turbo-q5_0.bin --host 127.0.0.1 --port 8178 -l auto
+```
+
+Everything (models, prompts, URLs, which file types) is configurable in **Configure → AI**.
 
 ## Development
 

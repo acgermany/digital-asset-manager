@@ -158,7 +158,7 @@ export default function Viewer({ files, index, onIndex, onClose }) {
                   <button className={`subnav-btn${panel === 'segments' ? ' active' : ''}`} onClick={() => chooseSide('segments')}>Segments</button>
                 </div>
               )}
-              {panel === 'info' && <InfoPanel fileId={file.id} />}
+              {panel === 'info' && <InfoPanel fileId={file.id} onSeek={t => { const m = mediaRef.current; if (m) { m.currentTime = t; m.play?.() } }} />}
               {panel === 'segments' && <SegmentPanel fileId={file.id} mediaRef={mediaRef} />}
             </div>
           )}

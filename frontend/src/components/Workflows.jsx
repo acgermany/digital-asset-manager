@@ -4,6 +4,7 @@ import Duplicates from './Duplicates'
 import ScanControl from './ScanControl'
 import Embeddings from './Embeddings'
 import Descriptions from './Descriptions'
+import Transcripts from './Transcripts'
 
 const WORKFLOWS = ['Ingest', 'Review', 'Duplicates', 'Scan', 'AI']
 
@@ -28,6 +29,8 @@ export default function Workflows({ active, onSelect, onConfigure }) {
       {active === 'Scan'       && <ScanControl />}
       {active === 'AI' && <>
         <Descriptions onConfigure={onConfigure} />
+        <div style={{ height: 12 }} />
+        <Transcripts onConfigure={onConfigure} />
         <div style={{ height: 12 }} />
         <Embeddings onConfigure={onConfigure} />
       </>}

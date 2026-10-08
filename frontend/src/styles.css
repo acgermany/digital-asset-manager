@@ -1160,3 +1160,8 @@ input.search.tag-input { width: 110px; padding: 3px 8px; font-size: 12px; }
 .ai-tag { background: none; border: 1px dashed var(--border); border-radius: 999px; color: var(--text-muted); padding: 1px 8px; font-size: 11px; cursor: pointer; }
 .ai-tag:hover:not(:disabled) { border-color: var(--accent-lt); color: var(--text); }
 .ai-tag.added { border-style: solid; opacity: 0.6; cursor: default; }
+
+.transcript { max-height: 280px; overflow-y: auto; margin-bottom: 8px; }
+.transcript-line { display: grid; grid-template-columns: 44px 1fr; gap: 6px; padding: 2px 0; font-size: 12px; line-height: 1.5; }
+.transcript-time { background: none; border: none; padding: 0; color: var(--accent-lt); font-family: monospace; font-size: 11px; cursor: pointer; text-align: left; }
+.transcript-time:hover { text-decoration: underline; }

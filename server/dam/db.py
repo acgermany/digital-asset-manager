@@ -48,6 +48,12 @@ def init_db() -> None:
             "ADD COLUMN IF NOT EXISTS description_model VARCHAR(128)",
             "ADD COLUMN IF NOT EXISTS described_at TIMESTAMPTZ",
             "ADD COLUMN IF NOT EXISTS description_error TEXT",
+            "ADD COLUMN IF NOT EXISTS transcript TEXT",
+            "ADD COLUMN IF NOT EXISTS transcript_segments JSONB DEFAULT '[]'::jsonb",
+            "ADD COLUMN IF NOT EXISTS transcript_language VARCHAR(16)",
+            "ADD COLUMN IF NOT EXISTS transcript_model VARCHAR(128)",
+            "ADD COLUMN IF NOT EXISTS transcribed_at TIMESTAMPTZ",
+            "ADD COLUMN IF NOT EXISTS transcript_error TEXT",
         ):
             conn.execute(text(f"ALTER TABLE IF EXISTS assets {ddl}"))
     models.Base.metadata.create_all(engine)

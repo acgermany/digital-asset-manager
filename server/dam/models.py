@@ -59,6 +59,14 @@ class Asset(Base):
     described_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     description_error: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Speech-to-text (Whisper) for videos and audio
+    transcript: Mapped[Optional[str]] = mapped_column(Text)
+    transcript_segments: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+    transcript_language: Mapped[Optional[str]] = mapped_column(String(16))
+    transcript_model: Mapped[Optional[str]] = mapped_column(String(128))
+    transcribed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    transcript_error: Mapped[Optional[str]] = mapped_column(Text)
+
     # Flattened text used for keyword search and as the embedding source
     search_text: Mapped[Optional[str]] = mapped_column(Text)
     metadata_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|done|failed
