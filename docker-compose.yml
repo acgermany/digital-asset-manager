@@ -64,8 +64,9 @@ services:
   app:
     <<: *dam-server
     container_name: dam-app
+    # API for local debugging only; the web UI (frontend) proxies /api for everyone else.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       <<: *dam-env
       # Jobs run by the worker inside the app container (0 = leave all work to worker containers)
@@ -95,12 +96,29 @@ services:
   frontend:
     build: ./frontend
     container_name: dam-frontend
+    # WEB_BIND=0.0.0.0 shares the web UI on your local network (login required);
+    # 127.0.0.1 keeps it on this machine only. localhost:3000 always works on this machine.
     ports:
-      - "3000:80"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-3000}:80"
+      - "127.0.0.1:3000:80"
     depends_on:
       - app
     mem_limit: 64m
     restart: unless-stopped
+
+  # Bonjour/mDNS so other devices find the app at http://dam.local (Linux hosts only:
+  # needs host networking). Enable with: docker compose --profile mdns up -d
+  # On macOS use `dns-sd` on the host instead (see README).
+  mdns:
+    image: dam-server:latest
+    command: ["python", "-m", "dam.mdns"]
+    network_mode: host
+    profiles: ["mdns"]
+    environment:
+      MDNS_NAME: ${MDNS_NAME:-dam}
+      WEB_PORT: ${WEB_PORT:-3000}
+    restart: unless-stopped
+    mem_limit: 64m
 
 volumes:
   dam-pgdata:

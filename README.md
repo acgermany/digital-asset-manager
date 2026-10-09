@@ -83,6 +83,28 @@ whisper-server -m ~/whisper-models/ggml-large-v3-turbo-q5_0.bin --host 127.0.0.1
 
 Everything (models, prompts, URLs, which file types) is configurable in **Configure → AI**.
 
+## Local network access
+
+The web UI is protected by a login. On first start the app prints a one-time **setup code**
+(`docker compose logs app | grep "setup code"`, also in `data/secrets/setup-code`); open the UI
+and use it to create the password. Only the web UI is published; the API (8000) and Postgres
+(5432) stay bound to localhost.
+
+In `.env`:
+
+```bash
+WEB_BIND=0.0.0.0   # share on the LAN (127.0.0.1 = this machine only)
+WEB_PORT=80        # so devices can use http://dam.local with no port
+```
+
+Advertise it with Bonjour so devices find **http://dam.local**:
+
+- **macOS host** (containers can't multicast to the LAN):
+  ```bash
+  dns-sd -P "Digital Asset Manager" _http._tcp local 80 dam.local "$(ipconfig getifaddr en0)" path=/
+  ```
+- **Linux host**: `docker compose --profile mdns up -d` (runs `dam.mdns` with host networking).
+
 ## Scaling
 
 Every unit of work (a file to ingest, a preview to render, a photo to describe) is its own job in

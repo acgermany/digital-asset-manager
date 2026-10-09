@@ -3,10 +3,13 @@ const BASE = '/api'
 async function handle(res) {
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`
+    let body = null
     try {
-      const body = await res.json()
+      body = await res.json()
       if (body?.detail) detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)
     } catch { /* not JSON */ }
+    // Session expired or signed out elsewhere: tell the app to show the login screen.
+    if (res.status === 401 && body?.auth) window.dispatchEvent(new CustomEvent('dam-auth', { detail: body.auth }))
     throw new Error(detail)
   }
   return res.json()
@@ -25,7 +28,12 @@ async function jreq(path, method, body) {
 }
 
 export const api = {
-  health:         ()                   => req('/health'),
+  authStatus:     ()                   => req('/auth/status'),
+  login:          (password)           => jreq('/auth/login', 'POST', { password }),
+  setup:          (setup_code, password) => jreq('/auth/setup', 'POST', { setup_code, password }),
+  logout:         ()                   => req('/auth/logout', { method: 'POST' }),
+  changePassword: (current, next)      => jreq('/auth/password', 'POST', { current, new: next }),
+  readiness:      ()                   => req('/readiness'),
   stats:          ()                   => req('/stats'),
   scanStatus:     ()                   => req('/scan/status'),
   startScan:      (path, workers = 2)  => req(`/scan/start?scan_path=${encodeURIComponent(path)}&workers=${workers}`, { method: 'POST' }),

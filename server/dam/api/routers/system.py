@@ -14,7 +14,13 @@ router = APIRouter()
 
 @router.get("/health")
 def health(session: Session = Depends(get_session)):
+    """Public (no login): reveals nothing beyond up/down."""
     session.execute(text("SELECT 1"))
+    return {"status": "ok"}
+
+
+@router.get("/readiness")
+def readiness(session: Session = Depends(get_session)):
     cfg = settings_store.all_settings(session)
     return {
         "status": "ok",

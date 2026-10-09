@@ -25,7 +25,7 @@ export default function Ingest({ onConfigure, onReview }) {
     try {
       const params = { limit: 100 }
       if (filter) params.status = filter
-      const [d, h, j] = await Promise.all([api.ingests(params), api.health(), api.jobsSummary()])
+      const [d, h, j] = await Promise.all([api.ingests(params), api.readiness(), api.jobsSummary()])
       setData(d); setHealth(h); setJobs(j); setErr(null)
     } catch (e) {
       setErr(e.message)

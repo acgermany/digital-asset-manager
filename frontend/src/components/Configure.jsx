@@ -3,6 +3,7 @@ import { api, fmtBytes } from '../api'
 import FolderPicker from './FolderPicker'
 import AISettings from './AISettings'
 import ProcessingSettings from './ProcessingSettings'
+import SecuritySettings from './SecuritySettings'
 
 function Status({ ok, warn, children }) {
   return <span className={`status-chip ${ok ? 'ok' : warn ? 'warn' : 'bad'}`}>{children}</span>
@@ -286,6 +287,10 @@ export default function Configure() {
             {m.last_error && !m.mounted && <div className="share-err">{m.last_error}</div>}
           </div>
         ))}
+      </Section>
+
+      <Section title="Security" sub="The web UI asks for this password on every device.">
+        <SecuritySettings notify={msg => { setNotice(msg); setTimeout(() => setNotice(null), 2500) }} />
       </Section>
 
       <Section title="Processing" sub="Queues, limits and workers. Add workers to go faster; cap queues to protect the Mac.">

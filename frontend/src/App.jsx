@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { api } from './api'
+import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import Files from './components/Files'
 import Workflows from './components/Workflows'
@@ -10,7 +12,29 @@ export default function App() {
   const [tab, setTab]         = useState('Dashboard')
   const [workflow, setWorkflow] = useState('Ingest')
 
+  const [auth, setAuth]         = useState(null)   // null = checking, 'ok' | 'login' | 'setup'
+
+  const checkAuth = useCallback(async () => {
+    try {
+      const s = await api.authStatus()
+      setAuth(!s.configured ? 'setup' : s.authenticated ? 'ok' : 'login')
+    } catch {
+      setAuth('login')
+    }
+  }, [])
+
+  useEffect(() => {
+    checkAuth()
+    const onAuth = e => setAuth(e.detail === 'setup' ? 'setup' : 'login')
+    window.addEventListener('dam-auth', onAuth)
+    return () => window.removeEventListener('dam-auth', onAuth)
+  }, [checkAuth])
+
   const goWorkflow = (name) => { setWorkflow(name); setTab('Workflows') }
+  const signOut = async () => { try { await api.logout() } finally { setAuth('login') } }
+
+  if (auth === null) return null
+  if (auth !== 'ok') return <Login mode={auth} onDone={checkAuth} />
 
   return (
     <div className="layout">
@@ -27,6 +51,8 @@ export default function App() {
             </button>
           ))}
         </nav>
+        <span style={{ flex: 1 }} />
+        <button className="nav-btn" onClick={signOut} title="Sign out">Sign out</button>
       </header>
 
       <main className="main">
