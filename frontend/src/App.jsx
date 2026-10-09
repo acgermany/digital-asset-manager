@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from './api'
 import Login from './components/Login'
+import { subscribe as subscribeUploads, summary as uploadSummary } from './uploads'
 import Dashboard from './components/Dashboard'
 import Files from './components/Files'
 import Workflows from './components/Workflows'
@@ -13,6 +14,8 @@ export default function App() {
   const [workflow, setWorkflow] = useState('Ingest')
 
   const [auth, setAuth]         = useState(null)   // null = checking, 'ok' | 'login' | 'setup'
+  const [uploads, setUploads]   = useState({ active: 0, pct: 0 })
+  useEffect(() => subscribeUploads(list => setUploads(uploadSummary(list))), [])
 
   const checkAuth = useCallback(async () => {
     try {
@@ -52,6 +55,11 @@ export default function App() {
           ))}
         </nav>
         <span style={{ flex: 1 }} />
+        {uploads.active > 0 && (
+          <button className="nav-btn upload-indicator" onClick={() => goWorkflow('Ingest')} title="Uploads in progress">
+            ⬆ {uploads.active} uploading · {uploads.pct}%
+          </button>
+        )}
         <button className="nav-btn" onClick={signOut} title="Sign out">Sign out</button>
       </header>
 

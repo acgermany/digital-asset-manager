@@ -53,6 +53,7 @@ def _config_payload(session: Session) -> dict:
         "drives": locations.drives(ms),
         "mounts": [_mount_info(m) for m in ms],
         "embed_dims": env.embed_dims,
+        "server_name": os.environ.get("SERVER_NAME") or None,
         "defaults": {k: settings_store.DEFAULTS[k] for k in ("describe_image_prompt", "describe_video_prompt",
                                                             "describe_model")},
     }

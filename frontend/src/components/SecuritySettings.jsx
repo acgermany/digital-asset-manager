@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
+import TrustCertificate from './TrustCertificate'
 
 export default function SecuritySettings({ notify }) {
   const [status, setStatus] = useState(null)
@@ -21,10 +22,19 @@ export default function SecuritySettings({ notify }) {
     }
   }
 
+  const trust = (
+    <>
+      <div className="cfg-subhead">HTTPS on your devices</div>
+      <TrustCertificate />
+    </>
+  )
   if (status?.managed_by_env) {
-    return <div className="cfg-help" style={{ marginTop: 0 }}>The password is set by <code>APP_PASSWORD</code> in the server’s <code>.env</code>. Change it there and restart.</div>
+    return <>
+      <div className="cfg-help" style={{ marginTop: 0 }}>The password is set by <code>APP_PASSWORD</code> in the server’s <code>.env</code>. Change it there and restart.</div>
+      {trust}
+    </>
   }
-  return (
+  return (<>
     <form className="cfg-inline" style={{ paddingTop: 0 }} onSubmit={submit}>
       <label>Current password
         <input className="search" type="password" style={{ width: 180 }} value={form.current} onChange={e => set('current', e.target.value)} autoComplete="current-password" />
@@ -38,5 +48,6 @@ export default function SecuritySettings({ notify }) {
       <button className="btn sm primary" type="submit" disabled={!form.current || form.next.length < 10}>Change password</button>
       {err && <span className="picker-err" style={{ padding: 0 }}>{err}</span>}
     </form>
-  )
+    {trust}
+  </>)
 }

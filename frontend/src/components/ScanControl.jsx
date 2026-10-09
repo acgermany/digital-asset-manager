@@ -9,10 +9,12 @@ export default function ScanControl() {
   const [err, setErr]          = useState(null)
   const [picking, setPicking]  = useState(false)
   const [sources, setSources]  = useState([])
+  const [serverName, setServerName] = useState(null)
 
   useEffect(() => {
     api.config().then(c => {
       const list = c.settings.catalog_sources || []
+      setServerName(c.server_name)
       setSources(list)
       setScanPath(p => p || list[0] || '')
     }).catch(() => {})
@@ -105,6 +107,7 @@ export default function ScanControl() {
             {picking && (
               <FolderPicker
                 title="Choose a folder to scan"
+                serverName={serverName}
                 initialPath={scanPath || null}
                 onClose={() => setPicking(false)}
                 onSelect={p => { setScanPath(p); setPicking(false) }}

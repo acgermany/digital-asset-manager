@@ -61,7 +61,23 @@ def tick(session, prev_state):
         where, params = transcribe.pending_where(cfg)
         _auto(session, "transcribe", "speech", where, params)
     queue.requeue_stale(session)
+    _expire_uploads(session)
     return state
+
+
+def _expire_uploads(session) -> None:
+    """Uploads with no progress for a day were abandoned: free the disk space."""
+    import os
+    rows = session.execute(text("""
+        UPDATE uploads SET status = 'failed', error = 'Abandoned (no data for 24 hours)'
+        WHERE status = 'uploading' AND updated_at < now() - interval '24 hours'
+        RETURNING temp_path""")).all()
+    for (path,) in rows:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    session.commit()
 
 
 def main() -> None:

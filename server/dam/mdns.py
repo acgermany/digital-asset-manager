@@ -1,7 +1,7 @@
 """Advertise the web UI on the local network with mDNS/Bonjour (Linux hosts).
 
 Publishes `<MDNS_NAME>.local` pointing at this machine's LAN address(es) and an
-`_http._tcp` service, so phones and computers find it at http://dam.local and in
+`_https._tcp` service, so phones and computers find it at https://dam.local and in
 Bonjour browsers. Needs host networking (multicast can't leave a bridged container):
 see the `mdns` service in docker-compose.yml.
 
@@ -40,13 +40,13 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     name = os.environ.get("MDNS_NAME", "dam")
     title = os.environ.get("MDNS_TITLE", "Digital Asset Manager")
-    port = int(os.environ.get("WEB_PORT", "80"))
+    port = int(os.environ.get("WEB_TLS_PORT", "443"))
     addrs = lan_addresses()
     if not addrs:
         raise SystemExit("No LAN address found; set MDNS_ADDRESSES")
     info = ServiceInfo(
-        "_http._tcp.local.",
-        f"{title}._http._tcp.local.",
+        "_https._tcp.local.",
+        f"{title}._https._tcp.local.",
         addresses=[socket.inet_aton(a) for a in addrs],
         port=port,
         properties={"path": "/"},
@@ -54,7 +54,7 @@ def main() -> None:
     )
     zc = Zeroconf(ip_version=IPVersion.V4Only)
     zc.register_service(info, allow_name_change=True)
-    url = f"http://{name}.local" + ("" if port == 80 else f":{port}")
+    url = f"https://{name}.local" + ("" if port == 443 else f":{port}")
     log.info("advertising %s at %s (%s)", title, url, ", ".join(addrs))
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())

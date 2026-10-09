@@ -77,3 +77,11 @@ def test_password_change_signs_out_other_sessions(session, db_password_mode):
     assert a.get("/api/config").status_code == 200                 # the changer stays in
     assert b.get("/api/config").status_code == 401                 # everyone else is out
     assert "auth" not in a.get("/api/config").json()["settings"]   # hash never exposed
+
+
+def test_cookie_is_secure_over_https(session):
+    c = anonymous()
+    r = c.post("/api/auth/login", json={"password": "test-password-123"}, headers={"X-Forwarded-Proto": "https"})
+    assert "secure" in r.headers["set-cookie"].lower()
+    r = c.post("/api/auth/login", json={"password": "test-password-123"})
+    assert "secure" not in r.headers["set-cookie"].lower()

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, fmtBytes } from '../api'
+import UploadPanel from './UploadPanel'
 
 const STATUS_LABEL = {
   queued: 'Queued', processing: 'Processing', accepted: 'Filed',
@@ -63,6 +64,7 @@ export default function Ingest({ onConfigure, onReview }) {
         </div>
       )}
       {jobs?.waiting_reason && <div className="warn-box">Waiting: {jobs.waiting_reason}</div>}
+      <UploadPanel />
       {err && <div className="error-box">{err}</div>}
 
       <div className="chip-row" style={{ marginBottom: 12 }}>

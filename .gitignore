@@ -217,3 +217,6 @@ frontend/node_modules/
 data/secrets/
 # Generated thumbnails, display images and video proxies
 data/cache/
+
+# Local certificate authority and HTTPS keys
+data/tls/

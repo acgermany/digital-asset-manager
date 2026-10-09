@@ -337,3 +337,26 @@ class Worker(Base):
     embedded: Mapped[bool] = mapped_column(Boolean, default=False)    # the one inside the app container
     started_at: Mapped[datetime] = _now()
     last_seen: Mapped[datetime] = _now()
+
+
+class Upload(Base):
+    """A file being uploaded from a browser into the hot folder (resumable, chunked)."""
+    __tablename__ = "uploads"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    filename: Mapped[str] = mapped_column(Text)
+    relative_dir: Mapped[str] = mapped_column(Text, default="")   # subfolders inside the provenance
+    provenance: Mapped[str] = mapped_column(Text)
+    size: Mapped[int] = mapped_column(BigInteger)
+    received: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_modified: Mapped[Optional[float]] = mapped_column(Float)  # the file's date on the device
+    status: Mapped[str] = mapped_column(String(16), default="uploading")  # uploading|complete|cancelled|failed
+    temp_path: Mapped[str] = mapped_column(Text)
+    final_path: Mapped[Optional[str]] = mapped_column(Text)
+    ingest_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ingests.id", ondelete="SET NULL"))
+    client: Mapped[Optional[str]] = mapped_column(String(64))
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

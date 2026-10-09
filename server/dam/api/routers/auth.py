@@ -15,9 +15,11 @@ def client_id(request: Request) -> str:
     return request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
 
 
-def _set_cookie(response: Response, session: Session) -> None:
+def _set_cookie(response: Response, session: Session, request: Request) -> None:
+    # Secure when the browser reached us over HTTPS (nginx terminates TLS and tells us).
+    secure = request.headers.get("x-forwarded-proto") == "https"
     response.set_cookie(auth.COOKIE, auth.make_token(session), max_age=env.session_hours * 3600,
-                        httponly=True, samesite="lax", path="/")
+                        httponly=True, samesite="lax", path="/", secure=secure)
 
 
 @router.get("/auth/status")
@@ -51,7 +53,7 @@ def setup(body: SetupBody, request: Request, response: Response, session: Sessio
     auth.record_success(client)
     events.log(session, "password_set", actor="user", client=client)
     session.commit()
-    _set_cookie(response, session)
+    _set_cookie(response, session, request)
     return {"ok": True}
 
 
@@ -72,7 +74,7 @@ def login(body: LoginBody, request: Request, response: Response, session: Sessio
     auth.record_success(client)
     events.log(session, "login", actor="user", client=client)
     session.commit()
-    _set_cookie(response, session)
+    _set_cookie(response, session, request)
     return {"ok": True}
 
 
@@ -101,5 +103,5 @@ def change_password(body: PasswordBody, request: Request, response: Response,
         raise HTTPException(400, str(e))
     events.log(session, "password_changed", actor="user", client=client_id(request))
     session.commit()
-    _set_cookie(response, session)
+    _set_cookie(response, session, request)
     return {"ok": True}

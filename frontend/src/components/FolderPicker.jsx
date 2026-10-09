@@ -3,7 +3,7 @@ import { api } from '../api'
 
 // Modal folder browser over the locations the app can see.
 // Paths shown and returned are host paths (what the user recognises).
-export default function FolderPicker({ title, initialPath, requireWritable, onSelect, onClose }) {
+export default function FolderPicker({ title, initialPath, requireWritable, onSelect, onClose, serverName }) {
   const [view, setView]       = useState(null)
   const [err, setErr]         = useState(null)
   const [newName, setNewName] = useState(null)   // null = not creating
@@ -63,6 +63,12 @@ export default function FolderPicker({ title, initialPath, requireWritable, onSe
               {!view.writable && ' · read-only'}
             </span>
           )}
+        </div>
+
+        <div className="picker-note">
+          These are folders on <strong>{serverName || 'the server'}</strong>, the computer running the DAM — not the device you’re using.
+          To bring files in from this device, use <strong>Upload</strong> (Workflows → Ingest). To use a folder that lives on another
+          computer, share it over the network and add it in Configure → <strong>Network shares</strong>; it then appears here.
         </div>
 
         {err && <div className="picker-err">{err}</div>}

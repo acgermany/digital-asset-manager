@@ -1,13 +1,23 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, fmtBytes } from '../api'
+import ReviewThumb from './ReviewThumb'
+import Viewer from './Viewer'
 
 const TIERS = ['critical', 'precious', 'standard', 'low', 'junk']
 const KINDS = [['', 'All'], ['exact_name_differs', 'Same content, different name'], ['classification', 'Classification']]
 
-function DuplicateReview({ r, onResolve }) {
+function DuplicateReview({ r, onResolve, onOpen }) {
+  // Identical content, so the library copy's preview is also the incoming file's preview.
+  const first = (r.details.existing || [])[0]
+  const kind = r.asset?.kind
   return (
     <>
       <div className="review-title">Same content, different name</div>
+      <div className="review-body">
+      {first && (
+        <ReviewThumb file={{ id: first.file_id, filename: first.filename }} kind={kind}
+                     caption="Identical content" onOpen={() => onOpen({ id: first.file_id, filename: first.filename, kind })} />
+      )}
       <div className="review-compare">
         <div>
           <div className="review-label">Incoming (held in hot folder/_review)</div>
@@ -24,6 +34,7 @@ function DuplicateReview({ r, onResolve }) {
           ))}
         </div>
       </div>
+      </div>
       <div className="review-actions">
         <button className="btn sm danger" onClick={() => onResolve('delete_incoming')}>Delete incoming copy</button>
         <button className="btn sm" onClick={() => onResolve('keep_both')}>Keep both names</button>
@@ -32,7 +43,7 @@ function DuplicateReview({ r, onResolve }) {
   )
 }
 
-function ClassificationReview({ r, onResolve }) {
+function ClassificationReview({ r, onResolve, onOpen }) {
   const [tier, setTier] = useState(r.asset?.value_tier || 'standard')
   const file = r.asset?.files?.[0]
   return (
@@ -41,15 +52,23 @@ function ClassificationReview({ r, onResolve }) {
         Is this <span className={`tag tier-${r.asset?.value_tier}`}>{r.asset?.value_tier}</span>?
         <span className="cfg-muted"> confidence {Math.round((r.asset?.tier_confidence || 0) * 100)}%</span>
       </div>
-      {file && (
-        <div>
-          <div className="review-name">{file.filename}</div>
-          <div className="cell-sub">{file.path}</div>
+      <div className="review-body">
+        {file && (
+          <ReviewThumb file={file} kind={r.asset?.kind}
+                       onOpen={() => onOpen({ id: file.id, filename: file.filename, kind: r.asset?.kind, value_tier: r.asset?.value_tier })} />
+        )}
+        <div style={{ minWidth: 0 }}>
+          {file && (
+            <>
+              <div className="review-name">{file.filename}</div>
+              <div className="cell-sub">{file.path}</div>
+            </>
+          )}
+          <ul className="review-reasons">
+            {(r.asset?.tier_reasons || []).map((reason, i) => <li key={i}>{reason}</li>)}
+          </ul>
         </div>
-      )}
-      <ul className="review-reasons">
-        {(r.asset?.tier_reasons || []).map((reason, i) => <li key={i}>{reason}</li>)}
-      </ul>
+      </div>
       <div className="review-actions">
         <button className="btn sm primary" onClick={() => onResolve('confirm')}>Yes, confirm</button>
         <span className="cfg-muted">or set to</span>
@@ -66,6 +85,7 @@ export default function Review() {
   const [kind, setKind] = useState('')
   const [data, setData] = useState(null)
   const [err, setErr]   = useState(null)
+  const [viewing, setViewing] = useState(null)
 
   const load = useCallback(async () => {
     try {
@@ -111,10 +131,11 @@ export default function Review() {
       {data?.reviews.map(r => (
         <div key={r.id} className="card review-card">
           {r.kind === 'exact_name_differs'
-            ? <DuplicateReview r={r} onResolve={(res) => resolve(r.id, res)} />
-            : <ClassificationReview r={r} onResolve={(res, tier) => resolve(r.id, res, tier)} />}
+            ? <DuplicateReview r={r} onResolve={(res) => resolve(r.id, res)} onOpen={setViewing} />
+            : <ClassificationReview r={r} onResolve={(res, tier) => resolve(r.id, res, tier)} onOpen={setViewing} />}
         </div>
       ))}
+      {viewing && <Viewer files={[viewing]} index={0} onIndex={() => {}} onClose={() => setViewing(null)} />}
     </>
   )
 }

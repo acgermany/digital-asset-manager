@@ -93,6 +93,21 @@ export const api = {
   batches:        ()                   => req('/batches'),
   cancelBatch:    (id)                 => req(`/batches/${id}/cancel`, { method: 'POST' }),
   startRender:    (kinds)              => jreq('/render', 'POST', { kinds }),
+  // Uploads from this device
+  startUpload:    (body)               => jreq('/uploads', 'POST', body),
+  uploadStatus:   (id)                 => req(`/uploads/${id}`),
+  uploadChunk:    async (id, offset, blob) => {
+    const res = await fetch(`${BASE}/uploads/${id}?offset=${offset}`, { method: 'PUT', body: blob })
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}))
+      const err = new Error(body?.detail?.message || 'Out of step')
+      if (body?.detail?.received !== undefined) err.received = body.detail.received
+      throw err
+    }
+    return handle(res)
+  },
+  completeUpload: (id)                 => req(`/uploads/${id}/complete`, { method: 'POST' }),
+  cancelUpload:   (id)                 => req(`/uploads/${id}`, { method: 'DELETE' }),
   // Assets / library
   fileDetails:    (fileId)             => req(`/files/${fileId}/details`),
   updateAsset:    (assetId, changes)   => jreq(`/assets/${assetId}`, 'PATCH', changes),

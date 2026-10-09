@@ -102,6 +102,11 @@ function AddShareForm({ onAdded, onCancel }) {
           <input className="search" value={form.options} onChange={e => set('options', e.target.value)} />
         </label>
       </div>
+      <div className="cfg-help">
+        A folder on another computer: on a Mac, System Settings → General → Sharing → <strong>File Sharing</strong> → add the folder
+        (and under Options, turn on SMB for your account). On Windows, right-click the folder → Properties → Sharing → Share.
+        Then enter that computer’s name (e.g. <code>Toms-MacBook.local</code>) and the folder’s share name here. Untick read-only to use it as the hot folder.
+      </div>
       <div className="share-checks">
         <label><input type="checkbox" checked={form.read_only} onChange={e => set('read_only', e.target.checked)} /> Read-only (untick to use it for the hot folder or library)</label>
         <label><input type="checkbox" checked={form.auto_mount} onChange={e => set('auto_mount', e.target.checked)} /> Reconnect automatically when the app starts</label>
@@ -306,6 +311,7 @@ export default function Configure() {
           title={picker.title}
           requireWritable={picker.writable}
           initialPath={picker.key === 'catalog_sources' ? null : (s[picker.key] || null)}
+          serverName={cfg.server_name}
           onClose={() => setPicker(null)}
           onSelect={onPicked}
         />

@@ -28,6 +28,8 @@ x-dam-env: &dam-env
   OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
   EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
   TRANSCRIBE_URL: ${TRANSCRIBE_URL:-http://host.docker.internal:8178}
+  # Shown in the UI so people know whose folders the pickers browse
+  SERVER_NAME: ${SERVER_NAME:-}
 
 x-dam-volumes: &dam-volumes
   - ${HOST_HOME:-${HOME}}:/host/home
@@ -97,10 +99,18 @@ services:
     build: ./frontend
     container_name: dam-frontend
     # WEB_BIND=0.0.0.0 shares the web UI on your local network (login required);
-    # 127.0.0.1 keeps it on this machine only. localhost:3000 always works on this machine.
+    # 127.0.0.1 keeps it on this machine only. HTTP redirects to HTTPS.
     ports:
-      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-3000}:80"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-80}:80"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_TLS_PORT:-443}:443"
       - "127.0.0.1:3000:80"
+    environment:
+      # Names and addresses devices use to reach the app; the HTTPS certificate covers these
+      # (it is re-issued automatically when they change). See docs/HTTPS.md.
+      TLS_HOSTNAMES: ${TLS_HOSTNAMES:-dam.local localhost}
+      TLS_IPS: ${TLS_IPS:-127.0.0.1}
+    volumes:
+      - ./data/tls:/etc/dam-tls
     depends_on:
       - app
     mem_limit: 64m
@@ -116,7 +126,7 @@ services:
     profiles: ["mdns"]
     environment:
       MDNS_NAME: ${MDNS_NAME:-dam}
-      WEB_PORT: ${WEB_PORT:-3000}
+      WEB_TLS_PORT: ${WEB_TLS_PORT:-443}
     restart: unless-stopped
     mem_limit: 64m
 

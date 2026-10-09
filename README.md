@@ -93,15 +93,27 @@ and use it to create the password. Only the web UI is published; the API (8000) 
 In `.env`:
 
 ```bash
-WEB_BIND=0.0.0.0   # share on the LAN (127.0.0.1 = this machine only)
-WEB_PORT=80        # so devices can use http://dam.local with no port
+WEB_BIND=0.0.0.0                      # share on the LAN (127.0.0.1 = this machine only)
+TLS_HOSTNAMES=dam.local localhost     # names the HTTPS certificate covers
+TLS_IPS=127.0.0.1 192.168.1.20        # and addresses (update if the machine's IP changes)
 ```
+
+**HTTPS.** The web UI is served on 443; port 80 redirects. On first start the frontend creates a
+private certificate authority in `data/tls/` (gitignored) that is name-constrained to `.local`,
+`localhost` and private IP ranges, so it cannot vouch for real websites. Trust it once per device:
+download it from `http://dam.local/dam-ca.crt` (or Configure → Security, which has per-device
+steps). The server certificate is re-issued automatically when the names/addresses change.
+
+**Files from other computers.** Folder pickers browse the computer running the DAM, never the
+browser's device (browsers don't allow that). From any device, use **Upload** in Workflows → Ingest
+(drag files or whole folders; resumable 16 MB chunks). To *watch* a folder on another computer,
+share it over SMB and add it in Configure → Network shares.
 
 Advertise it with Bonjour so devices find **http://dam.local**:
 
 - **macOS host** (containers can't multicast to the LAN):
   ```bash
-  dns-sd -P "Digital Asset Manager" _http._tcp local 80 dam.local "$(ipconfig getifaddr en0)" path=/
+  dns-sd -P "Digital Asset Manager" _https._tcp local 443 dam.local "$(ipconfig getifaddr en0)" path=/
   ```
 - **Linux host**: `docker compose --profile mdns up -d` (runs `dam.mdns` with host networking).
 
