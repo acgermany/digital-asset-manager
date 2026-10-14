@@ -1,0 +1,48 @@
+# Builds the server and frontend images and pushes them to the homelab Nexus registry.
+# Runs on the self-hosted Gitea runner only; GitHub ignores .gitea/workflows.
+# Tags: <short sha> and <branch> on every push; also :latest on main; <tag> for v* tags.
+name: images
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: registry.jib
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: dam-server
+            context: server
+          - image: dam-frontend
+            context: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to registry
+        run: echo "${{ secrets.NEXUS_PASSWORD }}" | docker login "$REGISTRY" -u "${{ secrets.NEXUS_USER }}" --password-stdin
+
+      - name: Build
+        run: |
+          repo="$REGISTRY/${{ matrix.image }}"
+          tags="$repo:${GITHUB_SHA::12} $repo:${GITHUB_REF_NAME//\//-}"
+          if [ "$GITHUB_REF_NAME" = main ]; then tags="$tags $repo:latest"; fi
+          echo "TAGS=$tags" >> "$GITHUB_ENV"
+          docker build $(printf -- '-t %s ' $tags) \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            ${{ matrix.context }}
+
+      - name: Push
+        run: for t in $TAGS; do docker push "$t"; done
+
+      - name: Log out
+        if: always()
+        run: docker logout "$REGISTRY"
