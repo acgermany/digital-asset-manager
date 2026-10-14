@@ -1,6 +1,8 @@
 # Builds the server and frontend images and pushes them to the homelab Nexus registry.
 # Runs on the self-hosted Gitea runner only; GitHub ignores .gitea/workflows.
-# Tags: <short sha> and <branch> on every push; also :latest on main; <tag> for v* tags.
+# Tags: <short sha> and <branch> on every push; also :latest on main.
+# Deploys to docker.jib after a successful build of main (or of the branch in the repo
+# variable DEPLOY_BRANCH), using the repo-scoped host runner labelled dam-deploy.
 name: images
 
 on:
@@ -46,3 +48,17 @@ jobs:
       - name: Log out
         if: always()
         run: docker logout "$REGISTRY"
+
+  deploy:
+    needs: build
+    if: github.ref_name == (vars.DEPLOY_BRANCH || 'main')
+    runs-on: dam-deploy
+    steps:
+      - name: Fetch deploy files
+        run: |
+          rm -rf src
+          git -c http.extraHeader="Authorization: token ${{ github.token }}" \
+            clone --quiet --depth 1 --branch "$GITHUB_REF_NAME" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" src
+
+      - name: Deploy
+        run: src/deploy/homelab/deploy.sh "${GITHUB_SHA::12}"

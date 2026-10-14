@@ -1,0 +1,51 @@
+# Homelab deployment on docker.jib: run the images CI pushed to registry.jib (no local
+# builds) and put Caddy in front for https://${DAM_DOMAIN} with a cert from the homelab CA.
+# Used together with the main file via COMPOSE_FILE in /opt/dam/.env (see deploy.sh).
+services:
+  app:
+    image: registry.jib/dam-server:${DAM_TAG:?DAM_TAG must be set}
+
+  worker:
+    image: registry.jib/dam-server:${DAM_TAG:?DAM_TAG must be set}
+
+  frontend:
+    image: registry.jib/dam-frontend:${DAM_TAG:?DAM_TAG must be set}
+
+  caddy:
+    image: caddy:2.11
+    container_name: dam-caddy
+    restart: unless-stopped
+    depends_on:
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy-data:/data
+      - /usr/local/share/ca-certificates/jib-root-ca.crt:/etc/caddy/jib-root-ca.crt:ro
+      # The frontend's own CA (created on its first start); Caddy verifies the frontend with it.
+      - ./data/tls:/etc/dam-tls:ro
+    mem_limit: 128m
+
+configs:
+  caddyfile:
+    content: |
+      {
+        acme_ca https://ca.jib/acme/acme/directory
+        acme_ca_root /etc/caddy/jib-root-ca.crt
+      }
+
+      ${DAM_DOMAIN} {
+        reverse_proxy https://frontend:443 {
+          transport http {
+            tls_trust_pool file /etc/dam-tls/ca.crt
+            tls_server_name localhost
+          }
+        }
+      }
+
+volumes:
+  caddy-data:
