@@ -131,7 +131,12 @@ Advertise it with Bonjour so devices find **http://dam.local**:
 Every unit of work (a file to ingest, a preview to render, a photo to describe) is its own job in
 a Postgres-backed queue. Any number of workers pull from it, here or on other machines. Pace is
 controlled per queue (pause, cluster-wide "max running") in **Configure → Processing** and per
-worker (jobs at once, which queues, drain) in **Workflows → Queues**. See
+worker (jobs at once, which queues, drain) in **Workflows → Queues**.
+
+The app container runs two worker pools: **app-core** for non-AI work (ingest, scan, render;
+`EMBEDDED_CORE_CONCURRENCY`, default 3) and **app-ai** for AI work (embed, vision, speech;
+`EMBEDDED_AI_CONCURRENCY`, default 2). A backlog of AI jobs waiting on the Mac can't hold up a
+large hot-folder drop. Extra `worker` containers take non-AI queues by default. See
 [docs/SCALING.md](docs/SCALING.md).
 
 ```bash

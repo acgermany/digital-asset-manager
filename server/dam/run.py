@@ -27,6 +27,29 @@ def wait_for_db() -> None:
     raise SystemExit("database never became available")
 
 
+def embedded_worker_commands(environ) -> dict:
+    """The worker pools inside the app container.
+
+    The app container always runs the API, the hot-folder watcher and the coordinator,
+    plus two embedded worker pools so a single-container install processes jobs on its own:
+      core: ingest, scan, render (non-AI)  — EMBEDDED_CORE_CONCURRENCY slots
+      ai:   embed, vision, speech          — EMBEDDED_AI_CONCURRENCY slots
+    Separate pools mean AI jobs waiting on the Mac never take the slots a hot-folder drop needs.
+    Scale out with more worker containers (docker compose up --scale worker=N).
+    EMBEDDED_WORKER_CONCURRENCY=0 turns both off (all work left to worker containers).
+    """
+    from .worker import AI_QUEUES, CORE_QUEUES
+    if environ.get("EMBEDDED_WORKER_CONCURRENCY", environ.get("WORKERS")) == "0":
+        return {}
+    pools = {
+        "core": (int(environ.get("EMBEDDED_CORE_CONCURRENCY") or 3), CORE_QUEUES),
+        "ai": (int(environ.get("EMBEDDED_AI_CONCURRENCY") or 2), AI_QUEUES),
+    }
+    return {f"worker-{pool}": [sys.executable, "-m", "dam.worker", "--embedded", "--name", f"app-{pool}",
+                               "--concurrency", str(n), "--queues", ",".join(queues)]
+            for pool, (n, queues) in pools.items() if n > 0}
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # status polls every few seconds
@@ -52,20 +75,12 @@ def main() -> None:
         if resumed:
             log.info("resumed %d interrupted job(s)", resumed)
 
-    # The app container always runs the API, the hot-folder watcher and the coordinator,
-    # plus an embedded worker so a single-container install processes jobs on its own.
-    # Scale out with more worker containers (docker compose up --scale worker=N).
-    embedded = int(os.environ.get("EMBEDDED_WORKER_CONCURRENCY", os.environ.get("WORKERS", "2")))
     commands = {
         "api": [sys.executable, "-m", "uvicorn", "dam.api.app:app", "--host", "0.0.0.0", "--port", "8000"],
         "watcher": [sys.executable, "-m", "dam.watcher"],
         "coordinator": [sys.executable, "-m", "dam.coordinator"],
+        **embedded_worker_commands(os.environ),
     }
-    if embedded > 0:
-        commands["worker"] = [sys.executable, "-m", "dam.worker", "--embedded", "--name", "app",
-                              "--concurrency", str(embedded),
-                              "--queues", os.environ.get("EMBEDDED_WORKER_QUEUES",
-                                                         "ingest,scan,render,embed,vision,speech")]
     procs = {name: subprocess.Popen(cmd) for name, cmd in commands.items()}
     stopping = False
 

@@ -71,8 +71,12 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       <<: *dam-env
-      # Jobs run by the worker inside the app container (0 = leave all work to worker containers)
-      EMBEDDED_WORKER_CONCURRENCY: ${EMBEDDED_WORKER_CONCURRENCY:-2}
+      # Workers inside the app container, in two pools so AI jobs can't starve hot-folder ingest:
+      # non-AI (ingest, scan, render) and AI (embed, vision, speech). 0 = leave all work to
+      # worker containers.
+      EMBEDDED_WORKER_CONCURRENCY: ${EMBEDDED_WORKER_CONCURRENCY:-}
+      EMBEDDED_CORE_CONCURRENCY: ${EMBEDDED_CORE_CONCURRENCY:-3}
+      EMBEDDED_AI_CONCURRENCY: ${EMBEDDED_AI_CONCURRENCY:-2}
       APP_PASSWORD: ${APP_PASSWORD:-}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
     volumes: *dam-volumes
@@ -87,7 +91,8 @@ services:
     command: ["python", "-m", "dam.worker"]
     environment:
       <<: *dam-env
-      WORKER_QUEUES: ${WORKER_QUEUES:-ingest,render,embed,vision,speech}
+      # Extra capacity for non-AI work by default; AI queues are capped by the Mac anyway.
+      WORKER_QUEUES: ${WORKER_QUEUES:-ingest,scan,render}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
     volumes: *dam-volumes
     deploy:

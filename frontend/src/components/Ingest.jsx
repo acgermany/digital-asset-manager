@@ -17,8 +17,11 @@ const FILTERS = [
   ['duplicate_deleted', 'Duplicates removed'], ['duplicate_review,collision_review', 'Needs review'], ['failed', 'Failed'],
 ]
 
+const PAGE = 100
+
 export default function Ingest({ onConfigure, onReview }) {
   const [data, setData]       = useState(null)
+  const [page, setPage]       = useState(0)
   const [health, setHealth]   = useState(null)
   const [jobs, setJobs]       = useState(null)
   const [filter, setFilter]   = useState('')
@@ -26,14 +29,16 @@ export default function Ingest({ onConfigure, onReview }) {
 
   const load = useCallback(async () => {
     try {
-      const params = { limit: 100 }
+      const params = { limit: PAGE, offset: page * PAGE }
       if (filter) params.status = filter
       const [d, h, j] = await Promise.all([api.ingests(params), api.readiness(), api.jobsSummary()])
       setData(d); setHealth(h); setJobs(j); setErr(null)
     } catch (e) {
       setErr(e.message)
     }
-  }, [filter])
+  }, [filter, page])
+
+  useEffect(() => { setPage(0) }, [filter])
 
   useEffect(() => {
     load()
@@ -46,6 +51,7 @@ export default function Ingest({ onConfigure, onReview }) {
   }
 
   const counts = data?.counts || {}
+  const pages = data ? Math.ceil(data.total / PAGE) : 0
   const inFlight = (counts.queued || 0) + (counts.processing || 0)
 
   return (
@@ -122,6 +128,18 @@ export default function Ingest({ onConfigure, onReview }) {
           </tbody>
         </table>
       </div>
+
+      {pages > 1 && (
+        <div className="pagination">
+          <button className="btn sm" disabled={page === 0} onClick={() => setPage(0)}>«</button>
+          <button className="btn sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹</button>
+          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            {page * PAGE + 1}–{Math.min((page + 1) * PAGE, data.total)} of {data.total.toLocaleString()}
+          </span>
+          <button className="btn sm" disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)}>›</button>
+          <button className="btn sm" disabled={page >= pages - 1} onClick={() => setPage(pages - 1)}>»</button>
+        </div>
+      )}
     </>
   )
 }

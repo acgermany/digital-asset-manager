@@ -22,7 +22,11 @@ from .models import Job, Worker
 from .tasks import CHUNKED, HANDLERS, Defer, Permanent
 
 log = logging.getLogger("dam.worker")
-ALL_QUEUES = ["ingest", "scan", "render", "embed", "vision", "speech"]
+# Non-AI work (disk/CPU on this box) and AI work (models on the Mac) run in separate worker
+# pools, so a backlog of slow AI jobs can never hold the slots a hot-folder drop needs.
+CORE_QUEUES = ["ingest", "scan", "render"]
+AI_QUEUES = ["embed", "vision", "speech"]
+ALL_QUEUES = CORE_QUEUES + AI_QUEUES
 HEARTBEAT = 10
 VERSION = "0.4"
 
