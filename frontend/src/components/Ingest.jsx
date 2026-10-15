@@ -4,15 +4,17 @@ import UploadPanel from './UploadPanel'
 
 const STATUS_LABEL = {
   queued: 'Queued', processing: 'Processing', accepted: 'Filed',
-  duplicate_deleted: 'Duplicate removed', duplicate_review: 'Needs review', failed: 'Failed',
+  duplicate_deleted: 'Duplicate removed', duplicate_review: 'Needs review',
+  collision_review: 'Name collision', discarded: 'Discarded', failed: 'Failed',
 }
 const STATUS_TONE = {
   queued: 'grey', processing: 'blue', accepted: 'green',
-  duplicate_deleted: 'yellow', duplicate_review: 'purple', failed: 'red',
+  duplicate_deleted: 'yellow', duplicate_review: 'purple',
+  collision_review: 'purple', discarded: 'grey', failed: 'red',
 }
 const FILTERS = [
   ['', 'All'], ['queued,processing', 'In progress'], ['accepted', 'Filed'],
-  ['duplicate_deleted', 'Duplicates removed'], ['duplicate_review', 'Needs review'], ['failed', 'Failed'],
+  ['duplicate_deleted', 'Duplicates removed'], ['duplicate_review,collision_review', 'Needs review'], ['failed', 'Failed'],
 ]
 
 export default function Ingest({ onConfigure, onReview }) {
@@ -113,7 +115,7 @@ export default function Ingest({ onConfigure, onReview }) {
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {i.status === 'failed' && <button className="btn sm" onClick={() => retry(i.id)}>Retry</button>}
-                  {i.status === 'duplicate_review' && <button className="btn sm" onClick={onReview}>Review</button>}
+                  {['duplicate_review', 'collision_review'].includes(i.status) && <button className="btn sm" onClick={onReview}>Review</button>}
                 </td>
               </tr>
             ))}

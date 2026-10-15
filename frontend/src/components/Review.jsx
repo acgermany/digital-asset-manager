@@ -4,7 +4,8 @@ import ReviewThumb from './ReviewThumb'
 import Viewer from './Viewer'
 
 const TIERS = ['critical', 'precious', 'standard', 'low', 'junk']
-const KINDS = [['', 'All'], ['exact_name_differs', 'Same content, different name'], ['classification', 'Classification']]
+const KINDS = [['', 'All'], ['exact_name_differs', 'Same content, different name'],
+               ['name_collision', 'Same name, different content'], ['classification', 'Classification']]
 
 function DuplicateReview({ r, onResolve, onOpen }) {
   // Identical content, so the library copy's preview is also the incoming file's preview.
@@ -38,6 +39,36 @@ function DuplicateReview({ r, onResolve, onOpen }) {
       <div className="review-actions">
         <button className="btn sm danger" onClick={() => onResolve('delete_incoming')}>Delete incoming copy</button>
         <button className="btn sm" onClick={() => onResolve('keep_both')}>Keep both names</button>
+      </div>
+    </>
+  )
+}
+
+function CollisionReview({ r, onResolve }) {
+  const d = r.details
+  const short = (sha) => sha ? `${sha.slice(0, 12)}…` : '—'
+  return (
+    <>
+      <div className="review-title">Same name, different content</div>
+      <div className="review-body">
+      <div className="review-compare">
+        <div>
+          <div className="review-label">Incoming (held in hot folder/_review)</div>
+          <div className="review-name">{d.incoming_name}</div>
+          <div className="cell-sub">{r.ingest?.original_path}</div>
+          <div className="cell-sub">{fmtBytes(r.ingest?.filesize)} · sha256 {short(d.incoming_sha256)}</div>
+        </div>
+        <div>
+          <div className="review-label">Already at this library path</div>
+          <div className="review-name">{d.incoming_name}</div>
+          <div className="cell-sub">{d.library_path}</div>
+          <div className="cell-sub">sha256 {short(d.existing_sha256)}</div>
+        </div>
+      </div>
+      </div>
+      <div className="review-actions">
+        <button className="btn sm danger" onClick={() => onResolve('delete_incoming')}>Delete incoming file</button>
+        <button className="btn sm" onClick={() => onResolve('keep_both')}>Keep both (rename incoming)</button>
       </div>
     </>
   )
@@ -132,6 +163,8 @@ export default function Review() {
         <div key={r.id} className="card review-card">
           {r.kind === 'exact_name_differs'
             ? <DuplicateReview r={r} onResolve={(res) => resolve(r.id, res)} onOpen={setViewing} />
+            : r.kind === 'name_collision'
+            ? <CollisionReview r={r} onResolve={(res) => resolve(r.id, res)} />
             : <ClassificationReview r={r} onResolve={(res, tier) => resolve(r.id, res, tier)} onOpen={setViewing} />}
         </div>
       ))}

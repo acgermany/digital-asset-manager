@@ -47,8 +47,17 @@ container has the `SYS_ADMIN` capability so it can mount them.
    - **Same checksum, different name** → moved to `_review/` and listed under
      Workflows → Review.
    - **New** → metadata (mediainfo JSON, EXIF, document text) is extracted and the file is
-     classified, then moved to `Library/<provenance>/<year>/<month>/`.
-3. Classification tiers: **critical** (tax/financial documents) and **precious** (family photos,
+     classified, then moved into the library.
+3. Dropped folders keep their structure in the library, so files with the same name in different
+   folders never collide: `Hotfolder/Grandma/Trip 2019/IMG_0001.jpg` →
+   `Library/Grandma/Trip 2019/IMG_0001.jpg`. Loose files dropped straight into the hot folder go
+   to `Library/unspecified/<year>/<month>/`. Every copy is checksum-verified before the hot-folder
+   file is removed.
+   - **That library path is already taken by a different file** (checksums differ) → nothing is
+     overwritten or renamed; the incoming file is moved to `_review/` and listed under
+     Workflows → Review as *Same name, different content* (delete incoming, or keep both).
+   - **Taken by an identical file** → the library copy is adopted and the incoming file removed.
+4. Classification tiers: **critical** (tax/financial documents) and **precious** (family photos,
    videos, recordings) are protected and flagged for backup; uncertain cases go to review.
 
 The library folder contains a hidden `.dam_library` marker. If it's missing (drive or NAS not

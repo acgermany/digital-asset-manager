@@ -14,7 +14,7 @@ from ..models import PROTECTED_TIERS, Asset, File, Ingest, Review
 from . import events, metadata
 from .assets import build_search_text
 from .classify import classify
-from .files import kind_for, local_move, mime_for, name_key, verified_move
+from .files import kind_for, local_move, mime_for, name_key, verified_move_to
 from .hashing import sha256_file
 
 log = logging.getLogger(__name__)
@@ -85,9 +85,39 @@ def register(session: Session, hotfolder: str, path: str, size: int, mtime: floa
     return ingest
 
 
-def _library_dir(library: str, provenance: str, when: datetime) -> str:
-    safe = provenance.replace("/", "_").strip() or "unspecified"
-    return os.path.join(library, safe, f"{when:%Y}", f"{when:%m}")
+def library_path(library: str, hotfolder: Optional[str], ingest: Ingest, when: datetime) -> str:
+    """Where an ingest belongs in the library.
+
+    A file dropped inside a folder keeps that folder's structure, so
+    `Hotfolder/Grandma/Trip 2019/IMG_0001.jpg` -> `Library/Grandma/Trip 2019/IMG_0001.jpg`.
+    Two folders that both contain `IMG_0001.jpg` therefore never collide. Loose files dropped
+    straight into the hot folder have no source structure and go to `unspecified/<yyyy>/<mm>/`.
+    """
+    rel = os.path.relpath(ingest.original_path, hotfolder) if hotfolder else ingest.original_filename
+    parts = [p.strip() for p in rel.split(os.sep)[:-1]]
+    if not parts or parts[0] == ".." or any(p in ("", ".", "..") for p in parts):
+        safe = ingest.provenance.replace("/", "_").strip() or "unspecified"
+        parts = [safe, f"{when:%Y}", f"{when:%m}"] if safe == "unspecified" else [safe]
+    return os.path.join(library, *parts, ingest.original_filename)
+
+
+def _hold_name_collision(session: Session, ingest: Ingest, asset: Asset, path: str, dest: str,
+                         existing_sha: str, hotfolder: str) -> None:
+    """Same library path, different content: park the incoming file for a human to decide."""
+    ingest.decision = "name_collision"
+    ingest.current_path = local_move(path, os.path.join(hotfolder, "_review"),
+                                     f"{ingest.id}_{ingest.original_filename}")
+    ingest.status, ingest.step = "collision_review", None
+    ingest.completed_at = datetime.now(timezone.utc)
+    existing = session.query(File).filter_by(path=dest).one_or_none()
+    session.add(Review(kind="name_collision", ingest_id=ingest.id, asset_id=asset.id,
+                       priority=40 if asset.protected else 20,
+                       details={"incoming_name": ingest.original_filename, "library_path": dest,
+                                "incoming_sha256": ingest.sha256, "existing_sha256": existing_sha,
+                                "existing_file_id": existing.id if existing else None,
+                                "existing_asset_id": existing.asset_id if existing else None}))
+    events.log(session, "name_collision_held_for_review", ingest_id=ingest.id, asset_id=asset.id,
+               library_path=dest, incoming_sha256=ingest.sha256, existing_sha256=existing_sha)
 
 
 def _existing_copy_available(session: Session, asset: Asset, ingest_id: int) -> bool:
@@ -259,7 +289,19 @@ def process(session: Session, ingest: Ingest, cfg: dict) -> None:
     ingest.step = "library"
     session.commit()
     when = asset.captured_at or ingest.ingest_date or datetime.now(timezone.utc)
-    dest = verified_move(path, _library_dir(library, ingest.provenance, when), ingest.original_filename, sha)
+    dest = library_path(library, hotfolder, ingest, when)
+    # Serialise on the destination so two workers can't both claim the same library path.
+    session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:p))"), {"p": dest})
+    if os.path.lexists(dest):
+        existing_sha = sha256_file(dest)
+        if existing_sha != sha:
+            _hold_name_collision(session, ingest, asset, path, dest, existing_sha, hotfolder)
+            session.commit()
+            return
+        # The library already holds this exact file at this path (e.g. copied in by hand).
+        os.unlink(path)
+    else:
+        verified_move_to(path, dest, sha)
     record_library_file(session, asset, dest, size, ingest.provenance)
     ingest.current_path = dest
     ingest.status, ingest.step = "accepted", None

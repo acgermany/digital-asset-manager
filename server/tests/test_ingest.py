@@ -148,3 +148,88 @@ def test_empty_file_is_never_a_duplicate(session, dirs):
     with pytest.raises(IngestError, match="Empty file"):
         process(session, i, cfg(hot, lib))
     assert session.query(Asset).count() == 0
+
+
+def test_dropped_folder_keeps_its_structure_so_same_names_dont_collide(session, dirs):
+    hot, lib = dirs
+    a = ingest_file(session, hot, write(os.path.join(hot, "Grandma", "Trip 2019", "IMG_0001.jpg"), b"trip"))
+    b = ingest_file(session, hot, write(os.path.join(hot, "Grandma", "Xmas", "IMG_0001.jpg"), b"xmas"))
+    for i in (a, b):
+        process(session, i, cfg(hot, lib))
+        assert i.status == "accepted"
+    assert a.current_path == os.path.join(lib, "Grandma", "Trip 2019", "IMG_0001.jpg")
+    assert b.current_path == os.path.join(lib, "Grandma", "Xmas", "IMG_0001.jpg")
+    assert session.query(Review).filter_by(kind="name_collision").count() == 0
+
+
+def test_loose_file_goes_to_dated_unspecified_folder(session, dirs):
+    hot, lib = dirs
+    i = ingest_file(session, hot, write(os.path.join(hot, "loose.txt"), b"loose"))
+    process(session, i, cfg(hot, lib))
+    rel = os.path.relpath(i.current_path, lib).split(os.sep)
+    assert rel[0] == "unspecified" and len(rel) == 4 and rel[-1] == "loose.txt"
+
+
+def test_same_path_different_checksum_is_held_for_review(session, dirs):
+    hot, lib = dirs
+    first = ingest_file(session, hot, write(os.path.join(hot, "Mom", "notes.txt"), b"version one"))
+    process(session, first, cfg(hot, lib))
+    second_path = write(os.path.join(hot, "Mom", "notes.txt"), b"version two")
+    second = ingest_file(session, hot, second_path)
+    process(session, second, cfg(hot, lib))
+
+    assert second.status == "collision_review" and second.decision == "name_collision"
+    assert not os.path.exists(second_path)
+    assert "/_review/" in second.current_path and os.path.isfile(second.current_path)
+    with open(first.current_path, "rb") as f:
+        assert f.read() == b"version one"  # existing library file untouched
+    review = session.query(Review).filter_by(kind="name_collision").one()
+    assert review.details["library_path"] == first.current_path
+    assert review.details["incoming_sha256"] != review.details["existing_sha256"]
+
+
+def test_collision_keep_both_renames_incoming_next_to_existing(session, dirs):
+    from dam.core.reviews import resolve
+    hot, lib = dirs
+    process(session, ingest_file(session, hot, write(os.path.join(hot, "Mom", "a.txt"), b"1")), cfg(hot, lib))
+    second = ingest_file(session, hot, write(os.path.join(hot, "Mom", "a.txt"), b"2"))
+    process(session, second, cfg(hot, lib))
+    review = session.query(Review).filter_by(kind="name_collision").one()
+    resolve(session, review, "keep_both", cfg(hot, lib))
+    assert second.status == "accepted"
+    assert second.current_path == os.path.join(lib, "Mom", "a (1).txt")
+    assert session.get(Asset, second.asset_id).files[0].path == second.current_path
+
+
+def test_collision_delete_incoming_removes_file_and_orphan_asset(session, dirs):
+    from dam.core.reviews import resolve
+    hot, lib = dirs
+    process(session, ingest_file(session, hot, write(os.path.join(hot, "Mom", "b.txt"), b"1")), cfg(hot, lib))
+    second = ingest_file(session, hot, write(os.path.join(hot, "Mom", "b.txt"), b"2"))
+    process(session, second, cfg(hot, lib))
+    held = second.current_path
+    review = session.query(Review).filter_by(kind="name_collision").one()
+    resolve(session, review, "delete_incoming", cfg(hot, lib))
+    assert second.status == "discarded" and not os.path.exists(held)
+    assert session.query(Asset).count() == 1 and review.status == "resolved"
+
+
+def test_identical_untracked_file_at_library_path_is_adopted(session, dirs):
+    hot, lib = dirs
+    write(os.path.join(lib, "Dad", "c.txt"), b"same")  # copied into the library by hand
+    p = write(os.path.join(hot, "Dad", "c.txt"), b"same")
+    i = ingest_file(session, hot, p)
+    process(session, i, cfg(hot, lib))
+    assert i.status == "accepted" and i.current_path == os.path.join(lib, "Dad", "c.txt")
+    assert not os.path.exists(p) and session.query(Review).filter_by(kind="name_collision").count() == 0
+
+
+def test_watcher_inventories_every_file_in_a_dropped_folder(session, dirs):
+    hot, _ = dirs
+    for rel in ("Drop/a.jpg", "Drop/sub/a.jpg", "Drop/sub/deeper/b.mov"):
+        write(os.path.join(hot, rel), rel.encode())
+    seen = {}
+    scan_once(session, hot, seen, stable_seconds=0)
+    assert scan_once(session, hot, seen, stable_seconds=0) == 3
+    assert {os.path.relpath(i.original_path, hot) for i in session.query(Ingest)} == {
+        "Drop/a.jpg", "Drop/sub/a.jpg", "Drop/sub/deeper/b.mov"}

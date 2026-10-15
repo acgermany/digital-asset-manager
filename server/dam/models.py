@@ -124,10 +124,10 @@ class Ingest(Base):
     ingest_date: Mapped[datetime] = _now()
     sha256: Mapped[Optional[str]] = mapped_column(String(64))
     filesize: Mapped[int] = mapped_column(BigInteger)
-    # queued|processing|accepted|duplicate_deleted|duplicate_review|failed
+    # queued|processing|accepted|duplicate_deleted|duplicate_review|collision_review|discarded|failed
     status: Mapped[str] = mapped_column(String(24), default="queued")
     step: Mapped[Optional[str]] = mapped_column(String(24))
-    decision: Mapped[Optional[str]] = mapped_column(String(24))  # new|duplicate_exact|duplicate_review
+    decision: Mapped[Optional[str]] = mapped_column(String(24))  # new|restore|duplicate_exact|duplicate_review|name_collision
     duplicate_of_asset_id: Mapped[Optional[int]] = mapped_column(ForeignKey("assets.id", ondelete="SET NULL"))
     current_path: Mapped[Optional[str]] = mapped_column(Text)  # where the file is now (library / _review)
     error: Mapped[Optional[str]] = mapped_column(Text)
@@ -180,7 +180,7 @@ class Review(Base):
     __tablename__ = "reviews"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    kind: Mapped[str] = mapped_column(String(32))  # exact_name_differs|classification|near_duplicate
+    kind: Mapped[str] = mapped_column(String(32))  # exact_name_differs|name_collision|classification|near_duplicate
     status: Mapped[str] = mapped_column(String(16), default="open")  # open|resolved
     priority: Mapped[int] = mapped_column(Integer, default=0)
     ingest_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ingests.id", ondelete="CASCADE"))

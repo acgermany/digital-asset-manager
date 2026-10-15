@@ -70,13 +70,20 @@ def unique_path(path: str) -> str:
 
 
 def verified_move(src: str, dest_dir: str, filename: str, expected_sha256: str) -> str:
-    """Copy to the destination, verify the checksum there, then remove the source.
+    """Copy to the destination (renamed `name (1).ext` if taken), verify, then remove the source."""
+    return verified_move_to(src, unique_path(os.path.join(dest_dir, filename)), expected_sha256)
+
+
+def verified_move_to(src: str, dest: str, expected_sha256: str) -> str:
+    """Copy to exactly `dest`, verify the checksum there, then remove the source.
 
     The library is on the NAS (a different filesystem), so a move is a copy. The
-    source is only removed once the copy is proven identical.
+    source is only removed once the copy is proven identical. Never overwrites:
+    the caller decides what a taken `dest` means.
     """
-    os.makedirs(dest_dir, exist_ok=True)
-    dest = unique_path(os.path.join(dest_dir, filename))
+    if os.path.exists(dest):
+        raise FileExistsError(dest)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
     tmp = dest + ".dam-tmp"
     shutil.copy2(src, tmp)
     actual = sha256_file(tmp)

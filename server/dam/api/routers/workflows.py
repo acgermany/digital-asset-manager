@@ -130,6 +130,8 @@ def _review_row(r: Review, ms: list) -> dict:
     details = dict(r.details or {})
     if "existing" in details:
         details["existing"] = [{**e, "path": locations.to_host(e.get("path"), ms)} for e in details["existing"]]
+    if "library_path" in details:
+        details["library_path"] = locations.to_host(details["library_path"], ms)
     return {
         "id": r.id, "kind": r.kind, "status": r.status, "priority": r.priority,
         "details": details, "suggestion": r.suggestion, "resolution": r.resolution,
