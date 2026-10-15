@@ -51,14 +51,31 @@ jobs:
 
   deploy:
     needs: build
-    if: github.ref_name == (vars.DEPLOY_BRANCH || 'main')
+    # The branch check is a step, not a job-level `if:`: Gitea evaluates job conditions on the
+    # server, where `vars` may not resolve, which silently skipped deploys of DEPLOY_BRANCH.
+    if: startsWith(github.ref, 'refs/heads/')
     runs-on: dam-deploy
     steps:
+      - name: Check deploy branch
+        id: gate
+        env:
+          DEPLOY_BRANCH: ${{ vars.DEPLOY_BRANCH }}
+        run: |
+          want="${DEPLOY_BRANCH:-main}"
+          echo "ref: $GITHUB_REF_NAME  deploy branch: $want (DEPLOY_BRANCH='${DEPLOY_BRANCH}')"
+          if [ "$GITHUB_REF_NAME" = "$want" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not the deploy branch; nothing to do."
+          fi
+
       - name: Fetch deploy files
+        if: steps.gate.outputs.deploy == 'true'
         run: |
           rm -rf src
           git -c http.extraHeader="Authorization: token ${{ github.token }}" \
             clone --quiet --depth 1 --branch "$GITHUB_REF_NAME" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" src
 
       - name: Deploy
+        if: steps.gate.outputs.deploy == 'true'
         run: src/deploy/homelab/deploy.sh "${GITHUB_SHA::12}"
