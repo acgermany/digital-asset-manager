@@ -6,8 +6,9 @@ import Dashboard from './components/Dashboard'
 import Files from './components/Files'
 import Workflows from './components/Workflows'
 import Configure from './components/Configure'
+import Orchestrator from './components/Orchestrator'
 
-const TABS = ['Dashboard', 'Files', 'Workflows', 'Configure']
+const TABS = ['Dashboard', 'Files', 'Workflows', 'AI Orchestrator', 'Configure']
 
 export default function App() {
   const [tab, setTab]         = useState('Dashboard')
@@ -67,6 +68,7 @@ export default function App() {
         {tab === 'Dashboard' && <Dashboard onGoScan={() => goWorkflow('Scan')} />}
         {tab === 'Files'     && <Files />}
         {tab === 'Workflows' && <Workflows active={workflow} onSelect={setWorkflow} onConfigure={() => setTab('Configure')} />}
+        {tab === 'AI Orchestrator' && <Orchestrator />}
         {tab === 'Configure' && <Configure />}
       </main>
     </div>

@@ -28,6 +28,10 @@ x-dam-env: &dam-env
   OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
   EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
   TRANSCRIBE_URL: ${TRANSCRIBE_URL:-http://host.docker.internal:8178}
+  # Optional AI orchestrator (also settable on the AI Orchestrator tab, which takes precedence)
+  ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-}
+  ORCHESTRATOR_KEY: ${ORCHESTRATOR_KEY:-}
+  ORCHESTRATOR_ADMIN_TOKEN: ${ORCHESTRATOR_ADMIN_TOKEN:-}
   # Shown in the UI so people know whose folders the pickers browse
   SERVER_NAME: ${SERVER_NAME:-}
 

@@ -20,6 +20,18 @@ log = logging.getLogger(__name__)
 
 STATUS_TIMEOUT = 4.0
 
+# Sent with every AI call. Plain Ollama/Whisper ignore them; the AI orchestrator uses them to
+# name the caller and order its queue (interactive search ahead of background batches).
+PRIORITY_INTERACTIVE = 50
+PRIORITY_BACKGROUND = 0
+
+
+def headers(cfg: Optional[dict], priority: int = PRIORITY_BACKGROUND) -> dict:
+    h = {"X-Client-Name": "dam", "X-Priority": str(priority)}
+    if cfg and cfg.get("orchestrator_key"):
+        h["Authorization"] = f"Bearer {cfg['orchestrator_key']}"
+    return h
+
 
 class AIUnavailable(Exception):
     pass
@@ -48,13 +60,13 @@ def get_state(session: Session) -> AIState:
     return state
 
 
-def probe(url: str, model: str) -> dict:
+def probe(url: str, model: str, cfg: Optional[dict] = None) -> dict:
     """Ask Ollama what is installed and what is loaded. Never raises."""
     try:
-        tags = httpx.get(f"{url}/api/tags", timeout=STATUS_TIMEOUT)
+        tags = httpx.get(f"{url}/api/tags", timeout=STATUS_TIMEOUT, headers=headers(cfg))
         tags.raise_for_status()
         installed = any(_matches(m.get("name", ""), model) for m in tags.json().get("models", []))
-        ps = httpx.get(f"{url}/api/ps", timeout=STATUS_TIMEOUT)
+        ps = httpx.get(f"{url}/api/ps", timeout=STATUS_TIMEOUT, headers=headers(cfg))
         ps.raise_for_status()
         loaded_until = None
         loaded = False
@@ -72,7 +84,7 @@ def probe(url: str, model: str) -> dict:
 def refresh(session: Session, cfg: dict) -> AIState:
     """Update ai_state from a live probe. Keeps 'loading' until the model shows up or times out."""
     state = get_state(session)
-    result = probe(cfg["ollama_url"], cfg["embed_model"])
+    result = probe(cfg["ollama_url"], cfg["embed_model"], cfg)
     state.reachable = result["reachable"]
     state.model_installed = result["installed"]
     state.model_loaded = result["loaded"]
@@ -105,12 +117,13 @@ def refresh(session: Session, cfg: dict) -> AIState:
     return state
 
 
-def embed(cfg: dict, texts: list, prefix: str = "", timeout: float = 120.0) -> list:
+def embed(cfg: dict, texts: list, prefix: str = "", timeout: float = 120.0,
+          priority: int = PRIORITY_BACKGROUND) -> list:
     """Embed texts with Ollama's /api/embed (batch input, keep_alive support)."""
     if not texts:
         return []
     try:
-        r = httpx.post(f"{cfg['ollama_url']}/api/embed", timeout=timeout, json={
+        r = httpx.post(f"{cfg['ollama_url']}/api/embed", timeout=timeout, headers=headers(cfg, priority), json={
             "model": cfg["embed_model"],
             "input": [prefix + t for t in texts],
             "keep_alive": cfg.get("embed_keep_alive") or env.embed_keep_alive,
@@ -148,7 +161,7 @@ def warm(session: Session, cfg: dict) -> AIState:
 
 def unload(cfg: dict) -> None:
     try:
-        httpx.post(f"{cfg['ollama_url']}/api/embed", timeout=STATUS_TIMEOUT,
+        httpx.post(f"{cfg['ollama_url']}/api/embed", timeout=STATUS_TIMEOUT, headers=headers(cfg),
                    json={"model": cfg["embed_model"], "input": [], "keep_alive": 0})
     except httpx.HTTPError as e:
         log.info("unload request failed: %s", e)

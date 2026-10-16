@@ -228,7 +228,7 @@ def installed_models(session: Session = Depends(get_session)):
     """Models installed in Ollama, with what they can do (for the Configure dropdowns)."""
     cfg = settings_store.all_settings(session)
     try:
-        r = httpx.get(f"{cfg['ollama_url']}/api/tags", timeout=5)
+        r = httpx.get(f"{cfg['ollama_url']}/api/tags", timeout=5, headers=ai.headers(cfg))
         r.raise_for_status()
     except Exception as e:  # noqa: BLE001
         return {"reachable": False, "error": str(e), "models": []}

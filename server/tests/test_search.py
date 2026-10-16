@@ -10,7 +10,7 @@ from dam.core.ingest import process, register
 client = TestClient(app)
 
 
-def fake_embed(cfg, texts, prefix="", timeout=0):
+def fake_embed(cfg, texts, prefix="", timeout=0, priority=0):
     """Deterministic 768-dim vectors: words 'beach'/'tax' push different axes."""
     out = []
     for t in texts:

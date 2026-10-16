@@ -5,7 +5,8 @@ from fastapi.responses import JSONResponse
 
 from ..core import auth
 from ..db import SessionLocal, init_db
-from .routers import ai, assets, auth as auth_routes, config, library, processing, system, uploads, workflows
+from .routers import (ai, assets, auth as auth_routes, config, library, orchestrator, processing, system,
+                      uploads, workflows)
 
 # Reachable without a session: login itself, and the container health check.
 PUBLIC = ("/api/auth/", "/api/health")
@@ -35,5 +36,5 @@ async def require_login(request: Request, call_next):
 
 
 for router in (auth_routes.router, system.router, config.router, library.router, workflows.router,
-               ai.router, assets.router, processing.router, uploads.router):
+               ai.router, assets.router, processing.router, uploads.router, orchestrator.router):
     app.include_router(router, prefix="/api")

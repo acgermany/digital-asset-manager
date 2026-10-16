@@ -55,7 +55,15 @@ DEFAULTS: dict = {
     "transcribe_auto": False,
     "transcribe_critical": False,
     "transcribe_max_minutes": 120,
+    # AI orchestrator: when Ollama/Whisper URLs point at it, every AI call is queued and
+    # prioritised there. The key identifies the DAM (and sets its base priority); the admin
+    # token is only needed if the orchestrator's dashboard is protected.
+    "orchestrator_url": os.environ.get("ORCHESTRATOR_URL", ""),
+    "orchestrator_key": os.environ.get("ORCHESTRATOR_KEY", ""),
+    "orchestrator_admin_token": os.environ.get("ORCHESTRATOR_ADMIN_TOKEN", ""),
 }
+
+SECRETS = ("orchestrator_key", "orchestrator_admin_token")
 
 EDITABLE = set(DEFAULTS)
 

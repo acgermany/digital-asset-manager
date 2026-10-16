@@ -155,6 +155,19 @@ def call_model(cfg: dict, prompt: str, images: list, timeout: float = 600) -> st
     return content
 
 
+def _error_text(r: httpx.Response) -> str:
+    """Ollama's error message, unwrapped (llama.cpp errors arrive JSON-encoded inside it)."""
+    import json
+    try:
+        msg = r.json().get("error", r.text)
+        inner = json.loads(msg) if isinstance(msg, str) and msg.startswith("{") else None
+        if isinstance(inner, dict):
+            msg = (inner.get("error") or {}).get("message") or msg
+        return str(msg)[:300]
+    except ValueError:
+        return r.text[:300]
+
+
 def _chat(cfg: dict, prompt: str, images: list, num_predict: int, timeout: float) -> tuple:
     body = {
         "model": cfg["describe_model"],
@@ -167,12 +180,21 @@ def _chat(cfg: dict, prompt: str, images: list, num_predict: int, timeout: float
     if not cfg.get("describe_think"):
         body["think"] = False
     try:
-        r = httpx.post(f"{cfg['ollama_url']}/api/chat", json=body, timeout=timeout)
+        r = httpx.post(f"{cfg['ollama_url']}/api/chat", json=body, timeout=timeout, headers=ai.headers(cfg))
     except httpx.HTTPError as e:
         raise ai.AIUnavailable(f"Ollama not reachable: {e}") from e
     if r.status_code == 404:
         raise ai.AIUnavailable(f"Model '{cfg['describe_model']}' is not installed on the Mac. "
                                f"Run: ollama pull {cfg['describe_model']}")
+    if r.status_code == 400:
+        detail = _error_text(r)
+        if "context" in detail.lower():
+            # A setting, not this file: wait (the job resumes once the context is raised).
+            raise ai.AIUnavailable(
+                f"'{cfg['describe_model']}' needs a larger context window: {detail}. Raise its context "
+                "length in the AI orchestrator (or OLLAMA_CONTEXT_LENGTH on the Mac), or use fewer / "
+                "smaller video frames")
+        raise DescribeError(f"The model rejected this file: {detail}")
     if r.status_code != 200:
         raise ai.AIUnavailable(f"Ollama error {r.status_code}: {r.text[:300]}")
     data = r.json()

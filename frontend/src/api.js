@@ -82,6 +82,7 @@ export const api = {
   cancelTranscribe: ()                    => req('/ai/transcribe/cancel', { method: 'POST' }),
   transcribeAsset:  (assetId)             => req(`/assets/${assetId}/transcribe`, { method: 'POST' }),
   testTranscribe:   ()                    => req('/ai/transcribe/test', { method: 'POST' }),
+  orchestratorStatus: ()               => req('/orchestrator/status'),
   // Processing: queues, workers, batches
   queues:         ()                   => req('/queues'),
   updateQueue:    (name, changes)      => jreq(`/queues/${name}`, 'PATCH', changes),

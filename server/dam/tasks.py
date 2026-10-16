@@ -116,7 +116,7 @@ def run_render(session, job: Job, cfg: dict) -> str:
 
 def run_describe(session, job: Job, cfg: dict) -> str:
     status = _cached(f"vision:{cfg['ollama_url']}:{cfg['describe_model']}",
-                     lambda: ai.probe(cfg["ollama_url"], cfg["describe_model"]))
+                     lambda: ai.probe(cfg["ollama_url"], cfg["describe_model"], cfg))
     if not status["reachable"]:
         raise Defer(status["error"] or "Ollama is not reachable")
     if not status["installed"]:

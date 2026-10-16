@@ -220,3 +220,6 @@ data/cache/
 
 # Local certificate authority and HTTPS keys
 data/tls/
+
+# macOS Finder metadata
+.DS_Store

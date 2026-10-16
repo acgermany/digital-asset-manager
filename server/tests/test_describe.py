@@ -140,3 +140,27 @@ def test_thinking_overrun_twice_is_a_clear_error(monkeypatch):
     monkeypatch.setattr(describe, "_chat", lambda *a: ("", True))
     with pytest.raises(describe.DescribeError, match="Max output"):
         describe.call_model({"describe_max_tokens": 1000}, "p", [b"x"])
+
+
+def _respond(monkeypatch, status, payload):
+    import httpx as _httpx
+    monkeypatch.setattr(describe.httpx, "post",
+                        lambda *a, **k: _httpx.Response(status, json=payload))
+
+
+def test_context_too_small_waits_with_a_clear_reason(monkeypatch):
+    import json
+    inner = {"error": {"code": 400, "message": "request (8632 tokens) exceeds the available context size (4096 tokens), try increasing it"}}
+    _respond(monkeypatch, 400, {"error": json.dumps(inner)})
+    cfg = {"describe_model": "qwen3-vl:8b", "ollama_url": "http://x", "describe_think": False}
+    with pytest.raises(ai.AIUnavailable) as e:
+        describe._chat(cfg, "p", [], 100, 5)
+    assert "larger context window" in str(e.value) and "8632 tokens" in str(e.value)
+    assert '{"error"' not in str(e.value)
+
+
+def test_other_rejections_fail_only_that_file(monkeypatch):
+    _respond(monkeypatch, 400, {"error": "image: unknown format"})
+    cfg = {"describe_model": "m", "ollama_url": "http://x", "describe_think": False}
+    with pytest.raises(describe.DescribeError, match="rejected this file: image: unknown format"):
+        describe._chat(cfg, "p", [], 100, 5)

@@ -20,6 +20,10 @@ x-dam-env: &dam-env
   DATA_DIR: /data
   OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
   TRANSCRIBE_URL: ${TRANSCRIBE_URL:-http://host.docker.internal:8178}
+  # Optional AI orchestrator (also settable on the AI Orchestrator tab, which takes precedence)
+  ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-}
+  ORCHESTRATOR_KEY: ${ORCHESTRATOR_KEY:-}
+  ORCHESTRATOR_ADMIN_TOKEN: ${ORCHESTRATOR_ADMIN_TOKEN:-}
 
 services:
   worker:

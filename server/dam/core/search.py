@@ -36,7 +36,7 @@ def keyword(session: Session, q: str, limit: int, kind=None, tier=None) -> list:
 
 
 def semantic(session: Session, cfg: dict, q: str, limit: int, kind=None, tier=None) -> list:
-    vec = ai.embed(cfg, [q], prefix=env.embed_query_prefix, timeout=30)[0]
+    vec = ai.embed(cfg, [q], prefix=env.embed_query_prefix, timeout=30, priority=ai.PRIORITY_INTERACTIVE)[0]
     where, params = _filters(kind, tier)
     rows = session.execute(text(f"""
         SELECT a.id, 1 - (e.embedding <=> CAST(:vec AS vector)) AS similarity

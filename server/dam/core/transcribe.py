@@ -139,7 +139,7 @@ def call_server(cfg: dict, wav_path: str, duration: float = 0) -> dict:
             data = {"response_format": "verbose_json", "language": lang, "temperature": "0.0"}
             endpoint = f"{url}/inference"
         try:
-            r = httpx.post(endpoint, data=data, files=files, timeout=timeout)
+            r = httpx.post(endpoint, data=data, files=files, timeout=timeout, headers=ai.headers(cfg))
         except httpx.HTTPError as e:
             raise ai.AIUnavailable(f"Transcription server not reachable at {url}: {e}") from e
     if r.status_code >= 500 or r.status_code == 404:
@@ -157,7 +157,8 @@ def call_server(cfg: dict, wav_path: str, duration: float = 0) -> dict:
 def server_status(cfg: dict) -> dict:
     url = cfg["transcribe_url"].rstrip("/")
     try:
-        r = httpx.get(url + ("/v1/models" if cfg.get("transcribe_api") == "openai" else "/"), timeout=4)
+        r = httpx.get(url + ("/v1/models" if cfg.get("transcribe_api") == "openai" else "/"), timeout=4,
+                      headers=ai.headers(cfg))
         return {"reachable": r.status_code < 500, "error": None if r.status_code < 500 else f"HTTP {r.status_code}"}
     except httpx.HTTPError as e:
         return {"reachable": False, "error": f"Not reachable at {url}: {e}"}

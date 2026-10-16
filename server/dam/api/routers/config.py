@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ...config import settings as env
-from ...core import events, locations, mounts as mount_ops, settings_store
+from ...core import ai, events, locations, mounts as mount_ops, settings_store
 from ...db import get_session
 from ...models import NetworkMount
 from ..deps import mounts
@@ -39,7 +39,8 @@ def _config_payload(session: Session) -> dict:
     cfg = settings_store.all_settings(session, fresh=True)
     return {
         "settings": {
-            **cfg,
+            **{k: v for k, v in cfg.items() if k not in settings_store.SECRETS},
+            **{f"{k}_set": bool(cfg.get(k)) for k in settings_store.SECRETS},
             "hotfolder": locations.to_host(cfg["hotfolder"], ms),
             "library": locations.to_host(cfg["library"], ms),
             "catalog_sources": [locations.to_host(p, ms) for p in cfg["catalog_sources"] or []],
@@ -107,6 +108,9 @@ class ConfigUpdate(BaseModel):
     transcribe_auto: Optional[bool] = None
     transcribe_critical: Optional[bool] = None
     transcribe_max_minutes: Optional[int] = None
+    orchestrator_url: Optional[str] = None
+    orchestrator_key: Optional[str] = None
+    orchestrator_admin_token: Optional[str] = None
 
 
 @router.put("/config")
@@ -152,6 +156,14 @@ def update_config(body: ConfigUpdate, session: Session = Depends(get_session)):
         raise HTTPException(400, "delete_mode must be 'delete' or 'trash'")
     if "stable_seconds" in changes and not 1 <= changes["stable_seconds"] <= 600:
         raise HTTPException(400, "stable_seconds must be between 1 and 600")
+    if "orchestrator_url" in changes:
+        url = (changes["orchestrator_url"] or "").strip().rstrip("/")
+        if url and not re.match(r"^https?://[^\s/]+(:\d+)?(/.*)?$", url):
+            raise HTTPException(400, "Orchestrator URL must look like http://host:11500")
+        changes["orchestrator_url"] = url
+    for key in settings_store.SECRETS:
+        if key in changes:
+            changes[key] = (changes[key] or "").strip()
     if "ollama_url" in changes:
         url = (changes["ollama_url"] or "").strip().rstrip("/")
         if not re.match(r"^https?://[^\s/]+(:\d+)?(/.*)?$", url):
@@ -206,7 +218,8 @@ def update_config(body: ConfigUpdate, session: Session = Depends(get_session)):
 
     settings_store.update(session, changes)
     events.log(session, "settings_changed", actor="user",
-               keys=sorted(changes), **{k: v for k, v in changes.items() if k != "ollama_url"})
+               keys=sorted(changes), **{k: v for k, v in changes.items()
+                                        if k != "ollama_url" and k not in settings_store.SECRETS})
     session.commit()
     return _config_payload(session)
 
@@ -372,7 +385,7 @@ def test_ai(session: Session = Depends(get_session)):
     cfg = settings_store.all_settings(session, fresh=True)
     url, model = cfg["ollama_url"], cfg["embed_model"]
     try:
-        r = httpx.get(f"{url}/api/tags", timeout=5)
+        r = httpx.get(f"{url}/api/tags", timeout=5, headers=ai.headers(cfg))
         r.raise_for_status()
         models = [m.get("name") for m in r.json().get("models", [])]
     except Exception as e:  # noqa: BLE001
